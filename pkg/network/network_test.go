@@ -697,7 +697,8 @@ func TestDetectInterface(t *testing.T) {
 	})
 
 	t.Run("wireless auto-detect", func(t *testing.T) {
-		manager := &Manager{logger: &mockLogger{}}
+		executor := newMockExecutor()
+		manager := &Manager{executor: executor, logger: &mockLogger{}}
 		config := &types.NetworkConfig{SSID: "test-network"}
 		// This will try to detect from actual system interfaces
 		result := manager.detectInterface(config)
@@ -706,7 +707,8 @@ func TestDetectInterface(t *testing.T) {
 	})
 
 	t.Run("wired auto-detect", func(t *testing.T) {
-		manager := &Manager{logger: &mockLogger{}}
+		executor := newMockExecutor()
+		manager := &Manager{executor: executor, logger: &mockLogger{}}
 		config := &types.NetworkConfig{}
 		// This will try to detect from actual system interfaces
 		result := manager.detectInterface(config)
