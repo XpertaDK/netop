@@ -1,10 +1,8 @@
 <div align="center">
 
-# 🌐 net
+# 🌐 netop
 
 **A lightweight network manager for Linux**
-
-*Part of the [netop](https://github.com/angelfreak/netop) project*
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Unlicense-blue.svg)](UNLICENSE)
