@@ -337,6 +337,43 @@ func TestMergeWithCommon_NoConfig(t *testing.T) {
 	assert.Equal(t, networkConfig, result)
 }
 
+func TestMergeWithCommon_VPNExplicitlyDisabled(t *testing.T) {
+	// Test that vpn: (empty/null in YAML) disables VPN inheritance
+	// Create a temp config file with vpn: set to null
+	tmpFile, err := os.CreateTemp("", "vpn_test_*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	configContent := `
+common:
+  vpn: common-vpn
+
+wired:
+  dns: dhcp
+  vpn:
+
+wireless:
+  ssid: TestWiFi
+`
+	_, err = tmpFile.WriteString(configContent)
+	assert.NoError(t, err)
+	tmpFile.Close()
+
+	manager := NewManager(&mockLogger{})
+	_, err = manager.LoadConfig(tmpFile.Name())
+	assert.NoError(t, err)
+
+	// wired has vpn: (empty) - should NOT inherit from common
+	wiredConfig := &types.NetworkConfig{Interface: "eth0"}
+	wiredResult := manager.MergeWithCommon("wired", wiredConfig)
+	assert.Equal(t, "", wiredResult.VPN, "wired should have no VPN (explicitly disabled)")
+
+	// wireless has no vpn key - should inherit from common
+	wirelessConfig := &types.NetworkConfig{SSID: "TestWiFi"}
+	wirelessResult := manager.MergeWithCommon("wireless", wirelessConfig)
+	assert.Equal(t, "common-vpn", wirelessResult.VPN, "wireless should inherit VPN from common")
+}
+
 func TestGetIgnoredInterfaces(t *testing.T) {
 	manager := NewManager(&mockLogger{})
 

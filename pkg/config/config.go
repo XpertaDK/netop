@@ -511,10 +511,16 @@ func (m *Manager) MergeWithCommon(networkName string, config *types.NetworkConfi
 		merged.Hostname = m.config.Common.Hostname
 	}
 	// Only inherit VPN from common if not explicitly set in network config
-	// This allows networks to disable VPN by setting vpn: (empty)
+	// This allows networks to disable VPN by setting vpn: (empty/null)
 	if merged.VPN == "" {
-		// Check if vpn was explicitly set to empty (disabled) vs not set at all
-		if m.viper == nil || !m.viper.IsSet(networkName+".vpn") {
+		// Check if vpn key exists in the network config (even if nil/empty)
+		// viper.IsSet() returns false for nil values, so we check the raw map
+		vpnExplicitlySet := false
+		if m.viper != nil {
+			networkMap := m.viper.GetStringMap(networkName)
+			_, vpnExplicitlySet = networkMap["vpn"]
+		}
+		if !vpnExplicitlySet {
 			merged.VPN = m.config.Common.VPN
 		}
 	}
