@@ -110,6 +110,40 @@ The following system utilities are required:
 sudo apt install iproute2 iw wpasupplicant isc-dhcp-client wireguard-tools
 ```
 
+### 🔓 Running Without Sudo
+
+Network operations require elevated privileges. Instead of typing `sudo` every time:
+
+<details>
+<summary><b>Option 1: Set Capabilities (Recommended)</b></summary>
+
+Grant only the specific capabilities needed:
+
+```bash
+sudo setcap 'cap_net_admin,cap_net_raw+ep' /usr/local/bin/net
+```
+
+Now you can run `net` directly without sudo.
+
+</details>
+
+<details>
+<summary><b>Option 2: Sudoers Rule</b></summary>
+
+Create a passwordless sudo rule:
+
+```bash
+echo "$USER ALL=(ALL) NOPASSWD: /usr/local/bin/net" | sudo tee /etc/sudoers.d/net
+```
+
+Then add an alias to your shell rc file (`~/.bashrc` or `~/.zshrc`):
+
+```bash
+alias net='sudo /usr/local/bin/net'
+```
+
+</details>
+
 [↑ Back to Top](#-net)
 
 ---
