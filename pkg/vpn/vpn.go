@@ -321,7 +321,7 @@ func (m *Manager) connectOpenVPN(config *types.VPNConfig) error {
 	m.logger.Info("Connecting to OpenVPN")
 
 	// Write config to temp file with secure permissions
-	tempConfig := "/tmp/openvpn.conf"
+	tempConfig := types.RuntimeDir + "/openvpn.conf"
 	err := m.writeFile(tempConfig, config.Config)
 	if err != nil {
 		return fmt.Errorf("failed to write OpenVPN config: %w", err)
@@ -360,7 +360,7 @@ func (m *Manager) connectWireGuard(config *types.VPNConfig) error {
 	}
 
 	// Write config to temp file with secure permissions
-	tempConfig := "/tmp/wg.conf"
+	tempConfig := types.RuntimeDir + "/wg.conf"
 	err := m.writeFile(tempConfig, config.Config)
 	if err != nil {
 		return fmt.Errorf("failed to write WireGuard config: %w", err)

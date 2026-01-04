@@ -331,7 +331,7 @@ func (m *Manager) startDHCPdhclient(iface string, hostname string) error {
 	// Clear interface-specific lease files only (faster than checking all paths)
 	m.executor.ExecuteWithTimeout(500*time.Millisecond, "rm", "-f",
 		"/var/lib/dhcp/dhclient."+iface+".leases",
-		"/tmp/dhclient."+iface+".leases")
+		types.RuntimeDir+"/dhclient."+iface+".leases")
 
 	// Build dhclient command with optional hostname via config file
 	// 15s timeout is plenty - DHCP typically completes in 3-5s
@@ -340,10 +340,11 @@ func (m *Manager) startDHCPdhclient(iface string, hostname string) error {
 		m.logger.Info("Sending hostname in DHCP request", "hostname", hostname)
 		// Create temporary dhclient.conf with hostname using atomic write with secure permissions
 		confContent := fmt.Sprintf("send host-name \"%s\";\n", hostname)
-		if _, err := m.executor.ExecuteWithInput("install", confContent, "-m", "0600", "/dev/stdin", "/tmp/dhclient-netop.conf"); err != nil {
+		dhclientConf := types.RuntimeDir + "/dhclient-netop.conf"
+		if _, err := m.executor.ExecuteWithInput("install", confContent, "-m", "0600", "/dev/stdin", dhclientConf); err != nil {
 			m.logger.Warn("Failed to create dhclient config", "error", err)
 		} else {
-			args = append(args, "-cf", "/tmp/dhclient-netop.conf")
+			args = append(args, "-cf", dhclientConf)
 		}
 	}
 	args = append(args, iface)
@@ -539,7 +540,7 @@ func (m *Manager) expandMACTemplate(template string) string {
 func (m *Manager) writeFile(path, content string) error {
 	// Use a simple echo to file approach since we don't have direct file writing
 	// In a real implementation, you'd want proper file permissions handling
-	tempFile := "/var/tmp/net_resolv.conf"
+	tempFile := types.RuntimeDir + "/staging.conf"
 	// Remove temp file before writing to prevent permission errors
 	_, err := m.executor.Execute("rm", "-f", tempFile)
 	if err != nil {

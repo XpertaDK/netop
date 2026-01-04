@@ -27,12 +27,12 @@ type hotspotManagerImpl struct {
 // NewHotspotManager creates a new hotspot manager
 func NewHotspotManager(executor types.SystemExecutor, logger types.Logger) types.HotspotManager {
 	return &hotspotManagerImpl{
-		executor:       executor,
-		logger:         logger,
-		hostapdPidFile: "/tmp/hostapd.pid",
-		dnsmasqPidFile: "/tmp/dnsmasq-hotspot.pid",
-		hostapdConfFile: "/tmp/hostapd.conf",
-		dnsmasqConfFile: "/tmp/dnsmasq-hotspot.conf",
+		executor:        executor,
+		logger:          logger,
+		hostapdPidFile:  types.RuntimeDir + "/hostapd.pid",
+		dnsmasqPidFile:  types.RuntimeDir + "/dnsmasq-hotspot.pid",
+		hostapdConfFile: types.RuntimeDir + "/hostapd.conf",
+		dnsmasqConfFile: types.RuntimeDir + "/dnsmasq-hotspot.conf",
 	}
 }
 

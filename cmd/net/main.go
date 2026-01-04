@@ -78,6 +78,11 @@ func main() {
 	// Ensure we're running as root for network operations
 	ensureRoot()
 
+	// Ensure runtime directory exists with secure permissions
+	if err := os.MkdirAll(types.RuntimeDir, 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create runtime directory %s: %v\n", types.RuntimeDir, err)
+	}
+
 	var rootCmd = &cobra.Command{
 		Use:   "net [network-name]",
 		Short: "Super lightweight network manager",

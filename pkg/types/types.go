@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// RuntimeDir is the directory for temporary runtime files (configs, pid files)
+// Using /run/netop/ instead of /tmp/ to avoid symlink attacks
+const RuntimeDir = "/run/netop"
+
 // Config represents the main configuration structure
 type Config struct {
 	Common   CommonConfig             `yaml:"common" mapstructure:"common"`

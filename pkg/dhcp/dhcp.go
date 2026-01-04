@@ -21,10 +21,10 @@ type dhcpManagerImpl struct {
 // NewDHCPManager creates a new DHCP server manager
 func NewDHCPManager(executor types.SystemExecutor, logger types.Logger) types.DHCPManager {
 	return &dhcpManagerImpl{
-		executor:       executor,
-		logger:         logger,
-		dnsmasqPidFile: "/tmp/dnsmasq-dhcp.pid",
-		dnsmasqConfFile: "/tmp/dnsmasq-dhcp.conf",
+		executor:        executor,
+		logger:          logger,
+		dnsmasqPidFile:  types.RuntimeDir + "/dnsmasq-dhcp.pid",
+		dnsmasqConfFile: types.RuntimeDir + "/dnsmasq-dhcp.conf",
 	}
 }
 

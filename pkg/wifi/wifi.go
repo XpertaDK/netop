@@ -122,10 +122,11 @@ func (m *Manager) ConnectWithBSSID(ssid, password, bssid, hostname string) error
 
 	// Create wpa_supplicant config with optional BSSID pinning
 	config := m.generateWPAConfig(ssid, password, bssid)
-	m.logger.Debug("Generated WPA config", "config", config)
+	// Don't log config - it contains credentials
+	m.logger.Debug("Generated WPA config", "ssid", ssid, "hasBSSID", bssid != "")
 
-	// Write config to temp file
-	tempConfig := "/tmp/wpa_supplicant.conf"
+	// Write config to temp file in secure runtime directory
+	tempConfig := types.RuntimeDir + "/wpa_supplicant.conf"
 	// Remove any existing file to avoid permission issues
 	_, err = m.executor.Execute("rm", "-f", tempConfig)
 	if err != nil {
@@ -448,7 +449,7 @@ func (m *Manager) obtainDHCPdhclient(hostname string) error {
 	// Clear interface-specific lease files only (faster than checking all paths)
 	m.executor.ExecuteWithTimeout(500*time.Millisecond, "rm", "-f",
 		"/var/lib/dhcp/dhclient."+m.iface+".leases",
-		"/tmp/dhclient."+m.iface+".leases")
+		types.RuntimeDir+"/dhclient."+m.iface+".leases")
 
 	// Build dhclient command with optional hostname via config file
 	// 15 second timeout is plenty - normal DHCP completes in 3-5 seconds
@@ -457,10 +458,11 @@ func (m *Manager) obtainDHCPdhclient(hostname string) error {
 		m.logger.Info("Sending hostname in DHCP request", "hostname", hostname)
 		// Create temporary dhclient.conf with hostname using atomic write with secure permissions
 		confContent := fmt.Sprintf("send host-name \"%s\";\n", hostname)
-		if _, err := m.executor.ExecuteWithInput("install", confContent, "-m", "0600", "/dev/stdin", "/tmp/dhclient-netop.conf"); err != nil {
+		dhclientConf := types.RuntimeDir + "/dhclient-netop.conf"
+		if _, err := m.executor.ExecuteWithInput("install", confContent, "-m", "0600", "/dev/stdin", dhclientConf); err != nil {
 			m.logger.Warn("Failed to create dhclient config", "error", err)
 		} else {
-			args = append(args, "-cf", "/tmp/dhclient-netop.conf")
+			args = append(args, "-cf", dhclientConf)
 		}
 	}
 	args = append(args, m.iface)
