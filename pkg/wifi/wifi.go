@@ -12,6 +12,26 @@ import (
 	"github.com/angelfreak/net/pkg/types"
 )
 
+// Compiled regexes for parsing - initialized once at package load
+var (
+	// WiFi scan result parsing
+	ssidRegex   = regexp.MustCompile(`SSID: (.+)`)
+	bssidRegex  = regexp.MustCompile(`BSS ([0-9a-f:]+)`)
+	signalRegex = regexp.MustCompile(`signal: ([-\d.]+)`)
+	freqRegex   = regexp.MustCompile(`freq: (.+)`)
+
+	// SSID hex escape decoding
+	hexEscapeRegex = regexp.MustCompile(`\\x([0-9a-fA-F]{2})`)
+
+	// wpa_cli status parsing
+	wpaSSIDRegex  = regexp.MustCompile(`(?m)^ssid=(.+)$`)
+	wpaStateRegex = regexp.MustCompile(`(?m)^wpa_state=(.+)$`)
+	wpaBSSIDRegex = regexp.MustCompile(`(?m)^bssid=(.+)$`)
+
+	// IP address parsing
+	inetRegex = regexp.MustCompile(`inet (\d+\.\d+\.\d+\.\d+)`)
+)
+
 // Manager implements the WiFiManager interface
 type Manager struct {
 	executor           types.SystemExecutor
@@ -69,6 +89,19 @@ func (m *Manager) Connect(ssid, password, hostname string) error {
 // ConnectWithBSSID connects to a WiFi network with optional BSSID pinning
 // hostname is optional - if provided, it will be sent in DHCP requests without changing system hostname
 func (m *Manager) ConnectWithBSSID(ssid, password, bssid, hostname string) error {
+	// Validate inputs
+	if err := types.ValidateSSID(ssid); err != nil {
+		return fmt.Errorf("invalid SSID: %w", err)
+	}
+	if err := types.ValidatePSK(password); err != nil {
+		return fmt.Errorf("invalid password: %w", err)
+	}
+	if hostname != "" {
+		if err := types.ValidateHostname(hostname); err != nil {
+			return fmt.Errorf("invalid hostname: %w", err)
+		}
+	}
+
 	var err error
 	if bssid != "" {
 		m.logger.Info("Connecting to WiFi network with BSSID pinning", "ssid", ssid, "bssid", bssid, "interface", m.iface)
@@ -129,12 +162,16 @@ func (m *Manager) ConnectWithBSSID(ssid, password, bssid, hostname string) error
 	// Wait for association with the access point
 	err = m.waitForAssociation(ssid)
 	if err != nil {
+		// Clean up wpa_supplicant on failure
+		m.killProcess("wpa_supplicant")
 		return fmt.Errorf("failed to associate with access point: %w", err)
 	}
 
 	// Get DHCP lease with optional hostname
 	err = m.obtainDHCP(hostname)
 	if err != nil {
+		// Clean up wpa_supplicant on failure
+		m.killProcess("wpa_supplicant")
 		return fmt.Errorf("failed to obtain DHCP lease: %w", err)
 	}
 
@@ -236,10 +273,7 @@ func (m *Manager) parseScanResults(output string) ([]types.WiFiNetwork, error) {
 
 	var currentNetwork *types.WiFiNetwork
 	var currentSecurity string
-	ssidRegex := regexp.MustCompile(`SSID: (.+)`)
-	bssidRegex := regexp.MustCompile(`BSS ([0-9a-f:]+)`)
-	signalRegex := regexp.MustCompile(`signal: ([-\d.]+)`)
-	freqRegex := regexp.MustCompile(`freq: (.+)`)
+	// Use package-level compiled regexes for better performance
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -522,8 +556,8 @@ func (m *Manager) getDNSServers() ([]net.IP, error) {
 	return dns, nil
 }
 func (m *Manager) decodeSSID(ssid string) string {
-	re := regexp.MustCompile(`\\x([0-9a-fA-F]{2})`)
-	result := re.ReplaceAllStringFunc(ssid, func(match string) string {
+	// Use package-level compiled regex for better performance
+	result := hexEscapeRegex.ReplaceAllStringFunc(ssid, func(match string) string {
 		hex := match[2:] // remove \x
 		b, err := strconv.ParseUint(hex, 16, 8)
 		if err != nil {

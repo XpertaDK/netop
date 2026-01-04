@@ -96,6 +96,11 @@ func (m *Manager) ClearDNS() error {
 func (m *Manager) SetMAC(iface, mac string) error {
 	m.logger.Debug("SetMAC using interface", "interface", iface, "mac", mac)
 
+	// Validate interface name
+	if err := types.ValidateInterfaceName(iface); err != nil {
+		return fmt.Errorf("invalid interface: %w", err)
+	}
+
 	if mac == "" || mac == "random" {
 		mac = m.generateRandomMAC()
 	}
@@ -108,6 +113,11 @@ func (m *Manager) SetMAC(iface, mac string) error {
 	// Handle MAC templates like "00:??:??:??:??:??"
 	if strings.Contains(mac, "??") {
 		mac = m.expandMACTemplate(mac)
+	}
+
+	// Validate final MAC address format
+	if err := types.ValidateMAC(mac); err != nil {
+		return fmt.Errorf("invalid MAC address: %w", err)
 	}
 
 	m.logger.Info("Setting MAC address", "interface", iface, "mac", mac)

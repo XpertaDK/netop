@@ -343,7 +343,9 @@ func (m *Manager) connectOpenVPN(config *types.VPNConfig) error {
 		}
 		time.Sleep(time.Second)
 	}
-	m.removeFile(tempConfig) // Clean up on failure
+	// Clean up on failure
+	m.killProcess("openvpn")
+	m.removeFile(tempConfig)
 	return fmt.Errorf("openvpn failed to establish tunnel within 30s")
 }
 
@@ -382,6 +384,8 @@ func (m *Manager) connectWireGuard(config *types.VPNConfig) error {
 	if config.Address != "" {
 		_, err = m.executor.ExecuteWithTimeout(5*time.Second, "ip", "addr", "replace", config.Address, "dev", iface)
 		if err != nil {
+			// Clean up interface on failure
+			m.executor.ExecuteWithTimeout(2*time.Second, "ip", "link", "del", iface)
 			return fmt.Errorf("failed to set WireGuard IP: %w", err)
 		}
 	}
@@ -389,6 +393,8 @@ func (m *Manager) connectWireGuard(config *types.VPNConfig) error {
 	// Bring interface up
 	_, err = m.executor.ExecuteWithTimeout(5*time.Second, "ip", "link", "set", iface, "up")
 	if err != nil {
+		// Clean up interface on failure
+		m.executor.ExecuteWithTimeout(2*time.Second, "ip", "link", "del", iface)
 		return fmt.Errorf("failed to bring WireGuard interface up: %w", err)
 	}
 
