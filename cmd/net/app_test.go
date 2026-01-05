@@ -54,9 +54,11 @@ func (e *testExecutor) HasCommand(cmd string) bool {
 
 // testConfigManager implements types.ConfigManager for testing
 type testConfigManager struct {
-	config        *types.Config
-	networkConfig *types.NetworkConfig
-	networkErr    error
+	config           *types.Config
+	networkConfig    *types.NetworkConfig
+	networkErr       error
+	mergeWithCommonCalled bool
+	lastMergedNetwork     string
 }
 
 func (c *testConfigManager) LoadConfig(path string) (*types.Config, error) {
@@ -75,6 +77,25 @@ func (c *testConfigManager) GetNetworkConfig(name string) (*types.NetworkConfig,
 }
 
 func (c *testConfigManager) MergeWithCommon(name string, config *types.NetworkConfig) *types.NetworkConfig {
+	c.mergeWithCommonCalled = true
+	c.lastMergedNetwork = name
+	// Apply basic merge logic for testing: inherit common settings if not set in network config
+	if c.config != nil && config != nil {
+		merged := *config
+		if len(merged.DNS) == 0 && len(c.config.Common.DNS) > 0 {
+			merged.DNS = c.config.Common.DNS
+		}
+		if merged.MAC == "" && c.config.Common.MAC != "" {
+			merged.MAC = c.config.Common.MAC
+		}
+		if merged.Hostname == "" && c.config.Common.Hostname != "" {
+			merged.Hostname = c.config.Common.Hostname
+		}
+		if merged.VPN == "" && c.config.Common.VPN != "" {
+			merged.VPN = c.config.Common.VPN
+		}
+		return &merged
+	}
 	return config
 }
 
@@ -641,4 +662,191 @@ func TestApp_RunDHCPServer_StartError(t *testing.T) {
 	err := app.RunDHCPServer("start", config)
 	assert.Error(t, err)
 	assert.Contains(t, stderr.String(), "Failed to start DHCP server")
+}
+
+// Tests for connectVPN and attemptVPNConnect
+
+func TestApp_connectVPN_NetworkSpecificVPN(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = &testConfigManager{
+		config: &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"work": {SSID: "WorkWiFi", VPN: "work-vpn"},
+			},
+		},
+	}
+
+	app.connectVPN("work")
+	assert.Contains(t, stdout.String(), "VPN connected (work-vpn)")
+}
+
+func TestApp_connectVPN_CommonVPN(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = &testConfigManager{
+		config: &types.Config{
+			Common: types.CommonConfig{
+				VPN: "default-vpn",
+			},
+			Networks: map[string]types.NetworkConfig{
+				"home": {SSID: "HomeWiFi"}, // No VPN configured
+			},
+		},
+	}
+
+	app.connectVPN("home")
+	assert.Contains(t, stdout.String(), "VPN connected (default-vpn)")
+}
+
+func TestApp_connectVPN_NetworkVPNOverridesCommon(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = &testConfigManager{
+		config: &types.Config{
+			Common: types.CommonConfig{
+				VPN: "default-vpn",
+			},
+			Networks: map[string]types.NetworkConfig{
+				"work": {SSID: "WorkWiFi", VPN: "work-vpn"},
+			},
+		},
+	}
+
+	app.connectVPN("work")
+	// Should use network-specific VPN, not common
+	assert.Contains(t, stdout.String(), "VPN connected (work-vpn)")
+	assert.NotContains(t, stdout.String(), "default-vpn")
+}
+
+func TestApp_connectVPN_NoConfig(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = &testConfigManager{config: nil}
+
+	app.connectVPN("any")
+	// Should not output anything when config is nil
+	assert.Empty(t, stdout.String())
+}
+
+func TestApp_connectVPN_NoVPNConfigured(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = &testConfigManager{
+		config: &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"home": {SSID: "HomeWiFi"},
+			},
+		},
+	}
+
+	app.connectVPN("home")
+	// Should not output anything when no VPN configured
+	assert.Empty(t, stdout.String())
+}
+
+func TestApp_connectVPN_ConnectionError(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = &testConfigManager{
+		config: &types.Config{
+			Common: types.CommonConfig{VPN: "broken-vpn"},
+		},
+	}
+	app.VPNMgr = &testVPNManager{connectErr: errors.New("connection refused")}
+
+	app.connectVPN("any")
+	// Error is logged but not output (VPN connection failure shouldn't fail WiFi connection)
+	assert.NotContains(t, stdout.String(), "VPN connected")
+}
+
+func TestApp_RunConnect_WithVPNIntegration(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.NoVPN = false
+	app.ConfigMgr = &testConfigManager{
+		networkErr: errors.New("not configured"), // Force direct SSID path
+		config: &types.Config{
+			Common: types.CommonConfig{VPN: "auto-vpn"},
+		},
+	}
+	app.WiFiMgr = &testWiFiManager{
+		connections: []types.Connection{
+			{Interface: "wlan0", SSID: "TestSSID", State: "connected", IP: net.ParseIP("192.168.1.100")},
+		},
+	}
+
+	err := app.RunConnect("TestSSID", "password")
+	assert.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Connected!")
+	assert.Contains(t, stdout.String(), "VPN connected (auto-vpn)")
+}
+
+func TestApp_RunConnect_NoVPNFlag(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.NoVPN = true // VPN disabled
+	app.ConfigMgr = &testConfigManager{
+		networkErr: errors.New("not configured"),
+		config: &types.Config{
+			Common: types.CommonConfig{VPN: "auto-vpn"},
+		},
+	}
+	app.WiFiMgr = &testWiFiManager{
+		connections: []types.Connection{
+			{Interface: "wlan0", SSID: "TestSSID", State: "connected", IP: net.ParseIP("192.168.1.100")},
+		},
+	}
+
+	err := app.RunConnect("TestSSID", "password")
+	assert.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Connected!")
+	assert.NotContains(t, stdout.String(), "VPN connected") // VPN should not be attempted
+}
+
+func TestApp_RunConnect_MergesWithCommon(t *testing.T) {
+	cfgMgr := &testConfigManager{
+		config: &types.Config{
+			Common: types.CommonConfig{
+				DNS:      []string{"8.8.8.8"},
+				MAC:      "random",
+				Hostname: "myhost",
+			},
+			Networks: map[string]types.NetworkConfig{
+				"work": {SSID: "WorkWiFi", PSK: "secret"},
+			},
+		},
+		networkConfig: &types.NetworkConfig{SSID: "WorkWiFi", PSK: "secret"},
+	}
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = cfgMgr
+	app.WiFiMgr = &testWiFiManager{
+		connections: []types.Connection{
+			{Interface: "wlan0", SSID: "WorkWiFi", State: "connected", IP: net.ParseIP("192.168.1.100")},
+		},
+	}
+
+	err := app.RunConnect("work", "")
+	assert.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Connected!")
+	// Verify MergeWithCommon was called
+	assert.True(t, cfgMgr.mergeWithCommonCalled, "MergeWithCommon should be called for configured networks")
+	assert.Equal(t, "work", cfgMgr.lastMergedNetwork)
+}
+
+func TestApp_RunShow_MergesWithCommon(t *testing.T) {
+	cfgMgr := &testConfigManager{
+		config: &types.Config{
+			Common: types.CommonConfig{
+				DNS: []string{"8.8.8.8", "8.8.4.4"},
+				MAC: "random",
+			},
+			Networks: map[string]types.NetworkConfig{
+				"work": {SSID: "WorkWiFi"},
+			},
+		},
+		networkConfig: &types.NetworkConfig{SSID: "WorkWiFi"},
+	}
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = cfgMgr
+
+	err := app.RunShow("work")
+	assert.NoError(t, err)
+	// Verify MergeWithCommon was called and common settings were merged
+	assert.True(t, cfgMgr.mergeWithCommonCalled)
+	assert.Equal(t, "work", cfgMgr.lastMergedNetwork)
+	// Verify merged DNS is shown in output
+	assert.Contains(t, stdout.String(), "8.8.8.8")
 }
