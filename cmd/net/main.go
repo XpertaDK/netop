@@ -9,6 +9,7 @@ import (
 
 	"github.com/angelfreak/net/pkg/config"
 	"github.com/angelfreak/net/pkg/dhcp"
+	"github.com/angelfreak/net/pkg/dhcpclient"
 	"github.com/angelfreak/net/pkg/hotspot"
 	"github.com/angelfreak/net/pkg/network"
 	"github.com/angelfreak/net/pkg/system"
@@ -181,10 +182,13 @@ func initializeManagers() {
 		iface = findDefaultInterface()
 	}
 
+	// Initialize DHCP client manager (used by wifi and network managers)
+	dhcpClientMgr := dhcpclient.NewManager(sysExecutor, logger)
+
 	// Initialize managers
-	wifiMgr = wifi.NewManager(sysExecutor, logger, iface)
+	wifiMgr = wifi.NewManager(sysExecutor, logger, iface, dhcpClientMgr)
 	vpnMgr = vpn.NewManager(sysExecutor, logger, cfgManager)
-	netMgr = network.NewManager(sysExecutor, logger)
+	netMgr = network.NewManager(sysExecutor, logger, dhcpClientMgr)
 	hotspotMgr = hotspot.NewHotspotManager(sysExecutor, logger)
 	dhcpMgr = dhcp.NewDHCPManager(sysExecutor, logger)
 }
