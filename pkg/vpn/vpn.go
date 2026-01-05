@@ -231,9 +231,13 @@ func (m *Manager) ListVPNs() ([]types.VPNStatus, error) {
 	m.logger.Debug("Listing VPNs")
 
 	// Read the active VPN name from state file (authoritative source)
-	// Lock briefly to ensure consistent read with Connect/Disconnect
+	// Lock and read file directly to ensure consistent read with Connect/Disconnect
 	m.mu.Lock()
-	activeVPN := getActiveVPN()
+	data, err := os.ReadFile(activeVPNFile)
+	activeVPN := ""
+	if err == nil {
+		activeVPN = strings.TrimSpace(string(data))
+	}
 	m.mu.Unlock()
 
 	// Track running VPN interfaces (used as fallback and for unnamed VPNs)
