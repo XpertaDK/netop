@@ -593,13 +593,13 @@ func TestApp_RunHotspot_Status(t *testing.T) {
 }
 
 func TestApp_RunHotspot_StartError(t *testing.T) {
-	app, stdout, _ := newTestApp()
+	app, _, stderr := newTestApp()
 	app.HotspotMgr = &testHotspotManager{startErr: errors.New("start failed")}
 	config := &types.HotspotConfig{SSID: "Test"}
 
 	err := app.RunHotspot("start", config)
 	assert.Error(t, err)
-	assert.Contains(t, stdout.String(), "Failed to start hotspot")
+	assert.Contains(t, stderr.String(), "Failed to start hotspot")
 }
 
 func TestApp_RunDHCPServer_Start(t *testing.T) {
@@ -634,11 +634,11 @@ func TestApp_RunDHCPServer_Status(t *testing.T) {
 }
 
 func TestApp_RunDHCPServer_StartError(t *testing.T) {
-	app, stdout, _ := newTestApp()
+	app, _, stderr := newTestApp()
 	app.DHCPMgr = &testDHCPManager{startErr: errors.New("start failed")}
 	config := &types.DHCPServerConfig{Interface: "eth0"}
 
 	err := app.RunDHCPServer("start", config)
 	assert.Error(t, err)
-	assert.Contains(t, stdout.String(), "Failed to start DHCP server")
+	assert.Contains(t, stderr.String(), "Failed to start DHCP server")
 }

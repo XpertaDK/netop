@@ -42,6 +42,16 @@ func (a *App) errorf(format string, args ...interface{}) {
 	fmt.Fprintf(a.Stderr, format, args...)
 }
 
+// attemptVPNConnect tries to connect to the specified VPN
+func (a *App) attemptVPNConnect(vpnName string) {
+	a.Logger.Info("Connecting to VPN", "vpn", vpnName)
+	if err := a.VPNMgr.Connect(vpnName); err != nil {
+		a.Logger.Error("Failed to connect to VPN", "error", err)
+	} else {
+		a.printf("✓ VPN connected (%s)\n", vpnName)
+	}
+}
+
 // connectVPN connects to VPN if configured for the network
 func (a *App) connectVPN(networkName string) {
 	config := a.ConfigMgr.GetConfig()
@@ -51,23 +61,13 @@ func (a *App) connectVPN(networkName string) {
 
 	// Check if network has a specific VPN configured
 	if netConfig, ok := config.Networks[networkName]; ok && netConfig.VPN != "" {
-		a.Logger.Info("Connecting to network VPN", "vpn", netConfig.VPN)
-		if err := a.VPNMgr.Connect(netConfig.VPN); err != nil {
-			a.Logger.Error("Failed to connect to VPN", "error", err)
-		} else {
-			a.printf("✓ VPN connected (%s)\n", netConfig.VPN)
-		}
+		a.attemptVPNConnect(netConfig.VPN)
 		return
 	}
 
 	// Check if common VPN is configured
 	if config.Common.VPN != "" {
-		a.Logger.Info("Connecting to common VPN", "vpn", config.Common.VPN)
-		if err := a.VPNMgr.Connect(config.Common.VPN); err != nil {
-			a.Logger.Error("Failed to connect to VPN", "error", err)
-		} else {
-			a.printf("✓ VPN connected (%s)\n", config.Common.VPN)
-		}
+		a.attemptVPNConnect(config.Common.VPN)
 	}
 }
 
@@ -137,6 +137,7 @@ func (a *App) RunConnect(name, password string) error {
 		err = a.WiFiMgr.Connect(name, password, "")
 		if err != nil {
 			a.Logger.Error("Failed to connect to WiFi", "error", err)
+			a.errorf("Error: %v\n", err)
 			return err
 		}
 		connectedIface = a.WiFiMgr.GetInterface()
@@ -152,6 +153,7 @@ func (a *App) RunConnect(name, password string) error {
 		err = a.NetworkMgr.ConnectToConfiguredNetwork(networkConfig, password, a.WiFiMgr)
 		if err != nil {
 			a.Logger.Error("Failed to connect to configured network", "error", err)
+			a.errorf("Error: %v\n", err)
 			return err
 		}
 		if networkConfig.Interface != "" {
@@ -595,13 +597,13 @@ func (a *App) RunHotspot(action string, config *types.HotspotConfig) error {
 		err := a.HotspotMgr.Start(config)
 		if err != nil {
 			a.Logger.Error("Failed to start hotspot", "error", err)
-			a.printf("Failed to start hotspot: %v\n", err)
+			a.errorf("Failed to start hotspot: %v\n", err)
 			return err
 		}
 		a.printf("✓ Hotspot started successfully\n")
 		a.printf("  SSID:     %s\n", config.SSID)
 		if config.Password != "" {
-			a.printf("  Password: %s\n", config.Password)
+			a.printf("  Security: WPA2 (password protected)\n")
 		} else {
 			a.printf("  Security: Open\n")
 		}
@@ -611,7 +613,7 @@ func (a *App) RunHotspot(action string, config *types.HotspotConfig) error {
 		err := a.HotspotMgr.Stop()
 		if err != nil {
 			a.Logger.Error("Failed to stop hotspot", "error", err)
-			a.printf("Failed to stop hotspot: %v\n", err)
+			a.errorf("Failed to stop hotspot: %v\n", err)
 			return err
 		}
 		a.println("✓ Hotspot stopped successfully")
@@ -654,7 +656,7 @@ func (a *App) RunDHCPServer(action string, config *types.DHCPServerConfig) error
 		err := a.DHCPMgr.Start(config)
 		if err != nil {
 			a.Logger.Error("Failed to start DHCP server", "error", err)
-			a.printf("Failed to start DHCP server: %v\n", err)
+			a.errorf("Failed to start DHCP server: %v\n", err)
 			return err
 		}
 		a.printf("✓ DHCP server started successfully\n")
@@ -667,7 +669,7 @@ func (a *App) RunDHCPServer(action string, config *types.DHCPServerConfig) error
 		err := a.DHCPMgr.Stop()
 		if err != nil {
 			a.Logger.Error("Failed to stop DHCP server", "error", err)
-			a.printf("Failed to stop DHCP server: %v\n", err)
+			a.errorf("Failed to stop DHCP server: %v\n", err)
 			return err
 		}
 		a.println("✓ DHCP server stopped successfully")
