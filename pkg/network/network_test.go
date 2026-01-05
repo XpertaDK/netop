@@ -915,7 +915,8 @@ func TestConnectToConfiguredNetwork(t *testing.T) {
 	t.Run("auto-detect interface falls back when detection finds nothing", func(t *testing.T) {
 		executor := newMockExecutor()
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		dhcpClient := &mockDHCPClient{}
+		manager := &Manager{executor: executor, logger: logger, dhcpClient: dhcpClient}
 
 		// Test wired connection with no interface - system may or may not have eth* interfaces
 		config := &types.NetworkConfig{
