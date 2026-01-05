@@ -9,22 +9,27 @@ import (
 )
 
 // App encapsulates all dependencies for testable CLI operations.
+// It provides methods for each CLI command (list, scan, connect, etc.)
+// that can be tested with mock implementations of the manager interfaces.
 type App struct {
-	Logger     types.Logger
-	Executor   types.SystemExecutor
-	ConfigMgr  types.ConfigManager
-	WiFiMgr    types.WiFiManager
-	VPNMgr     types.VPNManager
-	NetworkMgr types.NetworkManager
-	HotspotMgr types.HotspotManager
-	DHCPMgr    types.DHCPManager
+	// Managers for different subsystems
+	Logger     types.Logger         // Structured logging
+	Executor   types.SystemExecutor // Shell command execution
+	ConfigMgr  types.ConfigManager  // YAML configuration management
+	WiFiMgr    types.WiFiManager    // WiFi scanning and connection
+	VPNMgr     types.VPNManager     // VPN connection management
+	NetworkMgr types.NetworkManager // Network configuration (DNS, MAC, routes)
+	HotspotMgr types.HotspotManager // WiFi hotspot management
+	DHCPMgr    types.DHCPManager    // DHCP server management
 
-	Interface string
-	NoVPN     bool
-	Debug     bool
+	// Runtime configuration
+	Interface string // Primary network interface to use
+	NoVPN     bool   // When true, skip automatic VPN connection
+	Debug     bool   // Enable debug output
 
-	Stdout io.Writer
-	Stderr io.Writer
+	// Output streams for testability
+	Stdout io.Writer // Standard output (default: os.Stdout)
+	Stderr io.Writer // Standard error (default: os.Stderr)
 }
 
 // printf writes formatted output to stdout
@@ -42,17 +47,32 @@ func (a *App) errorf(format string, args ...interface{}) {
 	fmt.Fprintf(a.Stderr, format, args...)
 }
 
-// attemptVPNConnect tries to connect to the specified VPN
+// maskSecret returns a masked version of a secret string.
+// For strings longer than 4 characters, it shows the first 2 and last 2 characters
+// with asterisks in between. For shorter strings, it returns "****".
+func maskSecret(s string) string {
+	if len(s) <= 4 {
+		return "****"
+	}
+	return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
+}
+
+// attemptVPNConnect tries to connect to the specified VPN.
+// On success, prints a confirmation message to stdout.
+// On failure, logs the error and prints a warning to stderr.
 func (a *App) attemptVPNConnect(vpnName string) {
 	a.Logger.Info("Connecting to VPN", "vpn", vpnName)
 	if err := a.VPNMgr.Connect(vpnName); err != nil {
 		a.Logger.Error("Failed to connect to VPN", "error", err)
+		a.errorf("Warning: VPN connection failed: %v\n", err)
 	} else {
 		a.printf("✓ VPN connected (%s)\n", vpnName)
 	}
 }
 
-// connectVPN connects to VPN if configured for the network
+// connectVPN connects to VPN if configured for the network.
+// It checks for a network-specific VPN first, then falls back to the common VPN.
+// Does nothing if no VPN is configured or if the config is nil.
 func (a *App) connectVPN(networkName string) {
 	config := a.ConfigMgr.GetConfig()
 	if config == nil {
@@ -71,7 +91,8 @@ func (a *App) connectVPN(networkName string) {
 	}
 }
 
-// RunList lists active connections
+// RunList lists active network connections with their IP, gateway, and DNS info.
+// Returns an error if the connection list cannot be retrieved.
 func (a *App) RunList() error {
 	connections, err := a.WiFiMgr.ListConnections()
 	if err != nil {
@@ -103,7 +124,8 @@ func (a *App) RunList() error {
 	return nil
 }
 
-// RunScan scans for WiFi networks
+// RunScan scans for available WiFi networks and displays them.
+// If showOpen is true, only open (unprotected) networks are shown.
 func (a *App) RunScan(showOpen bool) error {
 	networks, err := a.WiFiMgr.Scan()
 	if err != nil {
@@ -122,9 +144,11 @@ func (a *App) RunScan(showOpen bool) error {
 	return nil
 }
 
-// RunConnect connects to a network
+// RunConnect connects to a network by name or SSID.
+// If name matches a configured network, uses that configuration (merged with common settings).
+// Otherwise treats name as a direct SSID. Optionally connects to VPN after WiFi connection.
 func (a *App) RunConnect(name, password string) error {
-	a.Logger.Debug("Connect command called", "name", name, "hasPassword", password != "")
+	a.Logger.Debug("Connect command called", "name", name)
 
 	// Check if it's a configured network
 	a.Logger.Debug("Looking up network config", "name", name)
@@ -149,7 +173,7 @@ func (a *App) RunConnect(name, password string) error {
 		if password == "" {
 			password = networkConfig.PSK
 		}
-		a.Logger.Debug("Using network config", "configSSID", networkConfig.SSID, "hasPSK", networkConfig.PSK != "")
+		a.Logger.Debug("Using network config", "configSSID", networkConfig.SSID)
 		err = a.NetworkMgr.ConnectToConfiguredNetwork(networkConfig, password, a.WiFiMgr)
 		if err != nil {
 			a.Logger.Error("Failed to connect to configured network", "error", err)
@@ -198,7 +222,9 @@ func (a *App) printConnectionInfo(iface string) {
 	}
 }
 
-// RunStop stops network services
+// RunStop stops network services.
+// If interfaces is empty, stops all services (hotspot, DHCP, VPN, WiFi, DNS).
+// If interfaces are specified, only brings down those specific interfaces.
 func (a *App) RunStop(interfaces []string) error {
 	if len(interfaces) == 0 {
 		// Stop all services
@@ -208,7 +234,7 @@ func (a *App) RunStop(interfaces []string) error {
 
 		// Stop hotspot
 		hotspotStatus, err := a.HotspotMgr.GetStatus()
-		if err == nil && hotspotStatus.Running {
+		if err == nil && hotspotStatus != nil && hotspotStatus.Running {
 			a.Logger.Debug("Stopping hotspot")
 			err = a.HotspotMgr.Stop()
 			if err != nil {
@@ -281,7 +307,9 @@ func (a *App) RunStop(interfaces []string) error {
 	return nil
 }
 
-// RunDNS sets DNS servers
+// RunDNS sets DNS servers or restores DHCP-provided DNS.
+// If servers is empty or contains only "dhcp", performs DHCP renewal to restore DNS.
+// Otherwise sets the specified DNS servers.
 func (a *App) RunDNS(servers []string) error {
 	if len(servers) == 0 || (len(servers) == 1 && servers[0] == "dhcp") {
 		err := a.NetworkMgr.DHCPRenew(a.Interface, "")
@@ -303,7 +331,8 @@ func (a *App) RunDNS(servers []string) error {
 	return nil
 }
 
-// RunMAC sets MAC address
+// RunMAC sets the MAC address on the primary interface.
+// The mac parameter can be a specific address or "random" for randomization.
 func (a *App) RunMAC(mac string) error {
 	err := a.NetworkMgr.SetMAC(a.Interface, mac)
 	if err != nil {
@@ -320,7 +349,10 @@ func (a *App) RunMAC(mac string) error {
 	return nil
 }
 
-// RunVPN manages VPN connections
+// RunVPN manages VPN connections.
+// If arg is empty, lists all configured VPNs with their status.
+// If arg is "stop", disconnects all active VPNs.
+// Otherwise connects to the VPN with the given name.
 func (a *App) RunVPN(arg string) error {
 	if arg == "" {
 		// List VPNs
@@ -363,7 +395,7 @@ func (a *App) RunVPN(arg string) error {
 	return nil
 }
 
-// RunGenkey generates a WireGuard key pair
+// RunGenkey generates a WireGuard private/public key pair and displays them.
 func (a *App) RunGenkey() error {
 	private, public, err := a.VPNMgr.GenerateWireGuardKey()
 	if err != nil {
@@ -378,7 +410,10 @@ func (a *App) RunGenkey() error {
 	return nil
 }
 
-// RunShow displays configuration
+// RunShow displays configuration.
+// If networkName is empty, shows all configuration (common settings, networks, VPNs).
+// If networkName is specified, shows that network's config merged with common settings.
+// Sensitive values like PSK are masked in the output.
 func (a *App) RunShow(networkName string) error {
 	if networkName == "" {
 		// Show all configurations
@@ -443,6 +478,9 @@ func (a *App) RunShow(networkName string) error {
 		if merged.SSID != "" {
 			a.printf("SSID: %s\n", merged.SSID)
 		}
+		if merged.PSK != "" {
+			a.printf("PSK: %s\n", maskSecret(merged.PSK))
+		}
 		if len(merged.DNS) > 0 {
 			a.printf("DNS: %s\n", strings.Join(merged.DNS, ", "))
 		}
@@ -459,7 +497,9 @@ func (a *App) RunShow(networkName string) error {
 	return nil
 }
 
-// RunStatus displays full network status
+// RunStatus displays comprehensive network status including:
+// hostname, interface, MAC address, WiFi connection, VPN status,
+// hotspot status, and DHCP server status.
 func (a *App) RunStatus() error {
 	a.println("Network Status")
 	a.println("==============")
@@ -586,7 +626,9 @@ func (a *App) RunStatus() error {
 	return nil
 }
 
-// RunHotspot manages the WiFi hotspot
+// RunHotspot manages the WiFi hotspot.
+// Actions: "start" (requires config), "stop", "status".
+// For security, the hotspot password is not displayed in output.
 func (a *App) RunHotspot(action string, config *types.HotspotConfig) error {
 	switch action {
 	case "start":
@@ -645,7 +687,8 @@ func (a *App) RunHotspot(action string, config *types.HotspotConfig) error {
 	return nil
 }
 
-// RunDHCPServer manages the DHCP server
+// RunDHCPServer manages the DHCP server for hotspot mode.
+// Actions: "start" (requires config), "stop", "status".
 func (a *App) RunDHCPServer(action string, config *types.DHCPServerConfig) error {
 	switch action {
 	case "start":

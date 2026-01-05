@@ -741,7 +741,7 @@ func TestApp_connectVPN_NoVPNConfigured(t *testing.T) {
 }
 
 func TestApp_connectVPN_ConnectionError(t *testing.T) {
-	app, stdout, _ := newTestApp()
+	app, stdout, stderr := newTestApp()
 	app.ConfigMgr = &testConfigManager{
 		config: &types.Config{
 			Common: types.CommonConfig{VPN: "broken-vpn"},
@@ -750,8 +750,9 @@ func TestApp_connectVPN_ConnectionError(t *testing.T) {
 	app.VPNMgr = &testVPNManager{connectErr: errors.New("connection refused")}
 
 	app.connectVPN("any")
-	// Error is logged but not output (VPN connection failure shouldn't fail WiFi connection)
+	// VPN connection failure should show warning to user but not fail WiFi connection
 	assert.NotContains(t, stdout.String(), "VPN connected")
+	assert.Contains(t, stderr.String(), "VPN connection failed")
 }
 
 func TestApp_RunConnect_WithVPNIntegration(t *testing.T) {
@@ -849,4 +850,35 @@ func TestApp_RunShow_MergesWithCommon(t *testing.T) {
 	assert.Equal(t, "work", cfgMgr.lastMergedNetwork)
 	// Verify merged DNS is shown in output
 	assert.Contains(t, stdout.String(), "8.8.8.8")
+}
+
+func TestMaskSecret(t *testing.T) {
+	// Short secrets are fully masked
+	assert.Equal(t, "****", maskSecret("abc"))
+	assert.Equal(t, "****", maskSecret("abcd"))
+
+	// Longer secrets show first 2 and last 2 characters
+	assert.Equal(t, "se****12", maskSecret("secret12"))
+	assert.Equal(t, "my**rd", maskSecret("myword"))
+	assert.Equal(t, "lo************34", maskSecret("longpassword1234"))
+}
+
+func TestApp_RunShow_MasksPSK(t *testing.T) {
+	cfgMgr := &testConfigManager{
+		config: &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"work": {SSID: "WorkWiFi"},
+			},
+		},
+		networkConfig: &types.NetworkConfig{SSID: "WorkWiFi", PSK: "supersecretpassword"},
+	}
+	app, stdout, _ := newTestApp()
+	app.ConfigMgr = cfgMgr
+
+	err := app.RunShow("work")
+	assert.NoError(t, err)
+	// PSK should be shown but masked
+	assert.Contains(t, stdout.String(), "PSK:")
+	assert.NotContains(t, stdout.String(), "supersecretpassword")
+	assert.Contains(t, stdout.String(), "su***************rd") // masked version
 }
