@@ -122,13 +122,9 @@ func TestDHCPManager_Integration(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	})
 
-	t.Run("get status", func(t *testing.T) {
-		status, err := manager.Status()
-		if err != nil {
-			t.Logf("Status error: %v", err)
-		} else {
-			t.Logf("DHCP status: %+v", status)
-		}
+	t.Run("check running status", func(t *testing.T) {
+		running := manager.IsRunning()
+		t.Logf("DHCP running: %v", running)
 	})
 
 	t.Run("stop DHCP server", func(t *testing.T) {
