@@ -34,8 +34,8 @@ func TestSetDNS_Integration(t *testing.T) {
 	// Create a test resolv.conf in the namespace
 	// Since we can't easily modify /etc/resolv.conf in namespace, we test the DNS setting logic
 	ns.Run(func() {
-		executor := system.NewExecutor(&testLogger{t: t})
-		manager := NewManager(executor, &testLogger{t: t})
+		executor := system.NewExecutor(&testLogger{t: t}, false)
+		manager := NewManager(executor, &testLogger{t: t}, nil)
 
 		// Test that SetDNS constructs the correct command
 		// In a real namespace, this would modify /etc/resolv.conf
@@ -168,12 +168,16 @@ func TestNetworkManager_Integration(t *testing.T) {
 	})
 
 	ns.Run(func() {
-		executor := system.NewExecutor(&testLogger{t: t})
-		manager := NewManager(executor, &testLogger{t: t})
+		executor := system.NewExecutor(&testLogger{t: t}, false)
+		manager := NewManager(executor, &testLogger{t: t}, nil)
 
-		// Test getting interface info (should not panic even if interface doesn't exist in this context)
-		info := manager.GetInterfaceInfo("veth-ns-nm")
-		t.Logf("Interface info: %+v", info)
+		// Test getting connection info (should not panic even if interface doesn't exist in this context)
+		info, err := manager.GetConnectionInfo("veth-ns-nm")
+		if err != nil {
+			t.Logf("GetConnectionInfo error (expected in namespace): %v", err)
+		} else {
+			t.Logf("Connection info: %+v", info)
+		}
 	})
 }
 

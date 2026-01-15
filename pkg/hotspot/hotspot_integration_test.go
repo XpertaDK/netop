@@ -3,6 +3,7 @@
 package hotspot
 
 import (
+	"os/exec"
 	"testing"
 	"time"
 
