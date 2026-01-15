@@ -3,11 +3,13 @@
 package vpn
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/angelfreak/net/pkg/types"
 	"github.com/angelfreak/net/tests/integration/testutil"
@@ -317,13 +319,30 @@ func (e *testExecutor) Execute(name string, args ...string) (string, error) {
 	return string(output), err
 }
 
-func (e *testExecutor) ExecuteWithTimeout(timeout interface{}, name string, args ...string) (string, error) {
-	return e.Execute(name, args...)
+func (e *testExecutor) ExecuteContext(ctx context.Context, name string, args ...string) (string, error) {
+	e.t.Logf("ExecuteContext: %s %v", name, args)
+	cmd := exec.CommandContext(ctx, name, args...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func (e *testExecutor) ExecuteWithTimeout(timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return e.ExecuteContext(ctx, name, args...)
 }
 
 func (e *testExecutor) ExecuteWithInput(name, input string, args ...string) (string, error) {
 	e.t.Logf("ExecuteWithInput: %s %v (input: %d bytes)", name, args, len(input))
 	cmd := exec.Command(name, args...)
+	cmd.Stdin = strings.NewReader(input)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func (e *testExecutor) ExecuteWithInputContext(ctx context.Context, name string, input string, args ...string) (string, error) {
+	e.t.Logf("ExecuteWithInputContext: %s %v (input: %d bytes)", name, args, len(input))
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin = strings.NewReader(input)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
