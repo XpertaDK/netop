@@ -28,20 +28,18 @@ func TestHotspotStart_Integration(t *testing.T) {
 	clientRadio := radios[1]
 
 	// Create hotspot manager
-	executor := system.NewExecutor(&testLogger{t: t})
+	executor := system.NewExecutor(&testLogger{t: t}, false)
 	logger := &testLogger{t: t}
-	dhcpMgr := &testDHCPManager{t: t}
-	manager := NewManager(executor, logger, dhcpMgr)
+	manager := NewHotspotManager(executor, logger)
 
 	// Configure hotspot
 	config := &types.HotspotConfig{
-		SSID:       "TestHotspot",
-		Password:   "hotspotpass123",
-		Interface:  apRadio.Interface,
-		Channel:    6,
-		IPAddress:  "192.168.50.1",
-		IPRange:    "192.168.50.10,192.168.50.50",
-		LeaseTime:  "1h",
+		SSID:      "TestHotspot",
+		Password:  "hotspotpass123",
+		Interface: apRadio.Interface,
+		Channel:   6,
+		Gateway:   "192.168.50.1",
+		IPRange:   "192.168.50.10,192.168.50.50",
 	}
 
 	t.Run("start hotspot", func(t *testing.T) {
@@ -181,19 +179,22 @@ func (l *testLogger) Error(msg string, args ...interface{}) {
 
 // testDHCPManager implements types.DHCPManager
 type testDHCPManager struct {
-	t *testing.T
+	t       *testing.T
+	running bool
 }
 
 func (d *testDHCPManager) Start(config *types.DHCPServerConfig) error {
 	d.t.Logf("DHCP Start called: %+v", config)
+	d.running = true
 	return nil
 }
 
 func (d *testDHCPManager) Stop() error {
 	d.t.Logf("DHCP Stop called")
+	d.running = false
 	return nil
 }
 
-func (d *testDHCPManager) Status() (*types.DHCPStatus, error) {
-	return &types.DHCPStatus{Running: true}, nil
+func (d *testDHCPManager) IsRunning() bool {
+	return d.running
 }

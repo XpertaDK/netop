@@ -101,16 +101,15 @@ func TestDHCPManager_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create DHCP manager
-	executor := system.NewExecutor(&testLogger{t: t})
+	executor := system.NewExecutor(&testLogger{t: t}, false)
 	logger := &testLogger{t: t}
-	manager := NewManager(executor, logger)
+	manager := NewDHCPManager(executor, logger)
 
 	config := &types.DHCPServerConfig{
-		Interface:    "veth-mgr-host",
-		RangeStart:  "192.168.201.10",
-		RangeEnd:    "192.168.201.50",
-		Gateway:     "192.168.201.1",
-		LeaseTime:   "1h",
+		Interface: "veth-mgr-host",
+		IPRange:   "192.168.201.10,192.168.201.50",
+		Gateway:   "192.168.201.1",
+		LeaseTime: "1h",
 	}
 
 	t.Run("start DHCP server via manager", func(t *testing.T) {

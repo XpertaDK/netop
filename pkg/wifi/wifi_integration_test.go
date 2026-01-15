@@ -77,9 +77,8 @@ func TestWiFiConnect_Integration(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Create WiFi manager for client
-	executor := system.NewExecutor(&testLogger{t: t})
-	manager := NewManager(executor, &testLogger{t: t}, nil) // nil for DHCP manager
-	manager.SetInterface(clientRadio.Interface)
+	executor := system.NewExecutor(&testLogger{t: t}, false)
+	manager := NewManager(executor, &testLogger{t: t}, clientRadio.Interface, nil) // nil for DHCP manager
 
 	t.Run("connect to WPA2 network", func(t *testing.T) {
 		err := manager.Connect("ConnectTestAP", "securepassword", "")
@@ -174,9 +173,8 @@ func TestWiFiBSSIDPinning_Integration(t *testing.T) {
 	t.Logf("AP BSSID: %s", bssid)
 
 	// Create WiFi manager
-	executor := system.NewExecutor(&testLogger{t: t})
-	manager := NewManager(executor, &testLogger{t: t}, nil)
-	manager.SetInterface(clientRadio.Interface)
+	executor := system.NewExecutor(&testLogger{t: t}, false)
+	manager := NewManager(executor, &testLogger{t: t}, clientRadio.Interface, nil)
 
 	// Try to connect with BSSID
 	err = manager.Connect("BSSIDTestAP", "testpassword", bssid)
@@ -193,9 +191,8 @@ func TestWiFiManagerListConnections_Integration(t *testing.T) {
 	radios := testutil.LoadHWSim(t, 1)
 	require.Len(t, radios, 1)
 
-	executor := system.NewExecutor(&testLogger{t: t})
-	manager := NewManager(executor, &testLogger{t: t}, nil)
-	manager.SetInterface(radios[0].Interface)
+	executor := system.NewExecutor(&testLogger{t: t}, false)
+	manager := NewManager(executor, &testLogger{t: t}, radios[0].Interface, nil)
 
 	// List connections (should work even if not connected)
 	connections, err := manager.ListConnections()
