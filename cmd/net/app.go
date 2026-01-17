@@ -37,6 +37,14 @@ func (a *App) printf(format string, args ...interface{}) {
 	fmt.Fprintf(a.Stdout, format, args...)
 }
 
+// progress prints a progress message to stdout only when not in debug mode.
+// In debug mode, detailed logs are already shown so progress messages are redundant.
+func (a *App) progress(format string, args ...interface{}) {
+	if !a.Debug {
+		fmt.Fprintf(a.Stdout, format, args...)
+	}
+}
+
 // println writes a line to stdout
 func (a *App) println(args ...interface{}) {
 	fmt.Fprintln(a.Stdout, args...)
@@ -62,11 +70,12 @@ func maskSecret(s string) string {
 // On failure, logs the error and prints a warning to stderr.
 func (a *App) attemptVPNConnect(vpnName string) {
 	a.Logger.Info("Connecting to VPN", "vpn", vpnName)
+	a.progress("Connecting to VPN '%s'...\n", vpnName)
 	if err := a.VPNMgr.Connect(vpnName); err != nil {
 		a.Logger.Error("Failed to connect to VPN", "error", err)
 		a.errorf("Warning: VPN connection failed: %v\n", err)
 	} else {
-		a.printf("✓ VPN connected (%s)\n", vpnName)
+		a.printf("VPN connected!\n")
 	}
 }
 
@@ -134,12 +143,24 @@ func (a *App) RunList() error {
 // RunScan scans for available WiFi networks and displays them.
 // If showOpen is true, only open (unprotected) networks are shown.
 func (a *App) RunScan(showOpen bool) error {
+	a.progress("Scanning for networks...\n")
+
 	networks, err := a.WiFiMgr.Scan()
 	if err != nil {
 		a.Logger.Error("Failed to scan networks", "error", err)
 		a.errorf("Error: %v\n", err)
 		return err
 	}
+
+	// Count networks to display (respecting showOpen filter)
+	displayCount := 0
+	for _, network := range networks {
+		if showOpen && network.Security != "Open" {
+			continue
+		}
+		displayCount++
+	}
+	a.progress("Found %d networks\n", displayCount)
 
 	for _, network := range networks {
 		if showOpen && network.Security != "Open" {
@@ -165,6 +186,7 @@ func (a *App) RunConnect(name, password string) error {
 		// Not configured, treat as SSID
 		a.Logger.Debug("Network config not found, treating as direct SSID", "name", name, "error", err)
 		a.Logger.Info("Connecting to SSID", "ssid", name)
+		a.progress("Connecting to WiFi...\n")
 		err = a.WiFiMgr.Connect(name, password, "")
 		if err != nil {
 			a.Logger.Error("Failed to connect to WiFi", "error", err)
@@ -181,6 +203,7 @@ func (a *App) RunConnect(name, password string) error {
 			password = networkConfig.PSK
 		}
 		a.Logger.Debug("Using network config", "configSSID", networkConfig.SSID)
+		a.progress("Connecting to WiFi...\n")
 		err = a.NetworkMgr.ConnectToConfiguredNetwork(networkConfig, password, a.WiFiMgr)
 		if err != nil {
 			a.Logger.Error("Failed to connect to configured network", "error", err)
@@ -194,7 +217,7 @@ func (a *App) RunConnect(name, password string) error {
 		}
 	}
 
-	// Display connection information
+	// Display connection information (includes "Connected!" message)
 	a.printConnectionInfo(connectedIface)
 
 	// Connect VPN if configured and not disabled
@@ -392,12 +415,13 @@ func (a *App) RunVPN(arg string) error {
 		}
 		a.println("✓ VPN disconnected")
 	} else {
+		a.progress("Connecting to VPN '%s'...\n", arg)
 		err := a.VPNMgr.Connect(arg)
 		if err != nil {
 			a.Logger.Error("Failed to connect to VPN", "name", arg, "error", err)
 			return err
 		}
-		a.printf("✓ VPN connected (%s)\n", arg)
+		a.printf("VPN connected!\n")
 	}
 	return nil
 }
@@ -643,13 +667,14 @@ func (a *App) RunHotspot(action string, config *types.HotspotConfig) error {
 			a.errorf("Configuration required for start action\n")
 			return fmt.Errorf("configuration required")
 		}
+		a.progress("Starting hotspot...\n")
 		err := a.HotspotMgr.Start(config)
 		if err != nil {
 			a.Logger.Error("Failed to start hotspot", "error", err)
 			a.errorf("Failed to start hotspot: %v\n", err)
 			return err
 		}
-		a.printf("✓ Hotspot started successfully\n")
+		a.printf("Hotspot '%s' started!\n", config.SSID)
 		a.printf("  SSID:     %s\n", config.SSID)
 		if config.Password != "" {
 			a.printf("  Security: WPA2 (password protected)\n")

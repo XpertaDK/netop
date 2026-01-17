@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,8 +15,9 @@ import (
 
 // Mock implementations
 type mockSystemExecutor struct {
-	commands        map[string]string
-	errors          map[string]error
+	mu               sync.Mutex
+	commands         map[string]string
+	errors           map[string]error
 	executedCommands []string // Track executed commands for verification
 }
 
@@ -25,6 +27,7 @@ func (m *mockSystemExecutor) Execute(cmd string, args ...string) (string, error)
 		fullCmd += " " + arg
 	}
 
+	m.mu.Lock()
 	// Track executed command
 	m.executedCommands = append(m.executedCommands, fullCmd)
 
@@ -34,12 +37,15 @@ func (m *mockSystemExecutor) Execute(cmd string, args ...string) (string, error)
 		if val, ok := m.commands[fullCmd]; ok {
 			output = val
 		}
+		m.mu.Unlock()
 		return output, err
 	}
 
 	if output, ok := m.commands[fullCmd]; ok {
+		m.mu.Unlock()
 		return output, nil
 	}
+	m.mu.Unlock()
 	return "mock output", nil
 }
 
@@ -65,6 +71,8 @@ func (m *mockSystemExecutor) HasCommand(cmd string) bool {
 
 // assertCommandExecuted verifies a command was executed
 func (m *mockSystemExecutor) assertCommandExecuted(t *testing.T, cmd string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, executed := range m.executedCommands {
 		if executed == cmd {
 			return
@@ -129,6 +137,20 @@ func TestNewManager(t *testing.T) {
 	assert.Equal(t, executor, manager.executor)
 	assert.Equal(t, logger, manager.logger)
 	assert.Equal(t, configMgr, manager.configMgr)
+	assert.Equal(t, types.RuntimeDir, manager.runtimeDir)
+}
+
+func TestNewManagerWithDir(t *testing.T) {
+	executor := &mockSystemExecutor{}
+	logger := &mockLogger{}
+	configMgr := &mockConfigManager{}
+	customDir := "/custom/runtime/dir"
+	manager := NewManagerWithDir(executor, logger, configMgr, customDir)
+	assert.NotNil(t, manager)
+	assert.Equal(t, executor, manager.executor)
+	assert.Equal(t, logger, manager.logger)
+	assert.Equal(t, configMgr, manager.configMgr)
+	assert.Equal(t, customDir, manager.runtimeDir)
 }
 
 func TestConnect(t *testing.T) {
@@ -360,12 +382,12 @@ func TestConnectOpenVPN(t *testing.T) {
 	executor := &mockSystemExecutor{
 		commands: map[string]string{
 			"install -m 0600 /dev/stdin /run/net/openvpn.conf": "",
-			"openvpn --config /run/net/openvpn.conf --daemon":  "",
-			"ip link show tun0":                                  "", // tunnel verification
+			"openvpn --config /run/net/openvpn.conf --daemon": "",
+			"ip link show tun0":                               "", // tunnel verification
 		},
 	}
 	logger := &mockLogger{}
-	manager := &Manager{executor: executor, logger: logger}
+	manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 	config := &types.VPNConfig{
 		Config: "openvpn config",
@@ -379,16 +401,16 @@ func TestConnectWireGuard(t *testing.T) {
 	executor := &mockSystemExecutor{
 		commands: map[string]string{
 			"install -m 0600 /dev/stdin /run/net/wg.conf": "",
-			"ip link add dev wg0 type wireguard":            "",
+			"ip link add dev wg0 type wireguard":          "",
 			"wg setconf wg0 /run/net/wg.conf":             "",
 			"rm -f /run/net/wg.conf":                      "",
-			"ip addr replace 10.0.0.1/24 dev wg0":           "",
-			"ip link set wg0 up":                            "",
-			"ip route replace default dev wg0":              "",
+			"ip addr replace 10.0.0.1/24 dev wg0":         "",
+			"ip link set wg0 up":                          "",
+			"ip route replace default dev wg0":            "",
 		},
 	}
 	logger := &mockLogger{}
-	manager := &Manager{executor: executor, logger: logger}
+	manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 	config := &types.VPNConfig{
 		Config:    "wireguard config",
@@ -468,12 +490,12 @@ func TestConnectOpenVPN_ErrorCases(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
 				"openvpn --config /run/net/openvpn.conf --daemon": "",
-				"ip link show tun0":                           "",
+				"ip link show tun0":                               "",
 			},
 			errors: map[string]error{},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config: "openvpn config",
@@ -495,7 +517,7 @@ func TestConnectOpenVPN_ErrorCases(t *testing.T) {
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config: "openvpn config",
@@ -520,7 +542,7 @@ func TestConnectOpenVPN_ErrorCases(t *testing.T) {
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config: "openvpn config",
@@ -538,14 +560,14 @@ func TestConnectWireGuard_ErrorCases(t *testing.T) {
 	t.Run("write file error", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"ip link add dev wg0 type wireguard": "",
-				"wg setconf wg0 /run/net/wg.conf":        "",
-				"ip addr replace 10.0.0.1/24 dev wg0":    "",
-				"ip link set wg0 up":                 "",
+				"ip link add dev wg0 type wireguard":  "",
+				"wg setconf wg0 /run/net/wg.conf":     "",
+				"ip addr replace 10.0.0.1/24 dev wg0": "",
+				"ip link set wg0 up":                  "",
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config:    "wireguard config",
@@ -562,17 +584,17 @@ func TestConnectWireGuard_ErrorCases(t *testing.T) {
 	t.Run("interface creation error (warning only)", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"install -m 0600 /dev/stdin /run/net/wg.conf":                "",
-				"wg setconf wg0 /run/net/wg.conf":     "",
-				"ip addr replace 10.0.0.1/24 dev wg0": "",
-				"ip link set wg0 up":              "",
+				"install -m 0600 /dev/stdin /run/net/wg.conf": "",
+				"wg setconf wg0 /run/net/wg.conf":             "",
+				"ip addr replace 10.0.0.1/24 dev wg0":         "",
+				"ip link set wg0 up":                          "",
 			},
 			errors: map[string]error{
 				"ip link add dev wg0 type wireguard": assert.AnError,
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config:    "wireguard config",
@@ -588,15 +610,15 @@ func TestConnectWireGuard_ErrorCases(t *testing.T) {
 	t.Run("setconf error", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"install -m 0600 /dev/stdin /run/net/wg.conf":                   "",
-				"ip link add dev wg0 type wireguard": "",
+				"install -m 0600 /dev/stdin /run/net/wg.conf": "",
+				"ip link add dev wg0 type wireguard":          "",
 			},
 			errors: map[string]error{
 				"wg setconf wg0 /run/net/wg.conf": assert.AnError,
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config:    "wireguard config",
@@ -612,16 +634,16 @@ func TestConnectWireGuard_ErrorCases(t *testing.T) {
 	t.Run("ip address assignment error", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"install -m 0600 /dev/stdin /run/net/wg.conf":                   "",
-				"ip link add dev wg0 type wireguard": "",
-				"wg setconf wg0 /run/net/wg.conf":        "",
+				"install -m 0600 /dev/stdin /run/net/wg.conf": "",
+				"ip link add dev wg0 type wireguard":          "",
+				"wg setconf wg0 /run/net/wg.conf":             "",
 			},
 			errors: map[string]error{
 				"ip addr replace 10.0.0.1/24 dev wg0": assert.AnError,
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config:    "wireguard config",
@@ -637,17 +659,17 @@ func TestConnectWireGuard_ErrorCases(t *testing.T) {
 	t.Run("interface up error", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"install -m 0600 /dev/stdin /run/net/wg.conf":                   "",
-				"ip link add dev wg0 type wireguard": "",
-				"wg setconf wg0 /run/net/wg.conf":        "",
-				"ip addr replace 10.0.0.1/24 dev wg0":    "",
+				"install -m 0600 /dev/stdin /run/net/wg.conf": "",
+				"ip link add dev wg0 type wireguard":          "",
+				"wg setconf wg0 /run/net/wg.conf":             "",
+				"ip addr replace 10.0.0.1/24 dev wg0":         "",
 			},
 			errors: map[string]error{
 				"ip link set wg0 up": assert.AnError,
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config:    "wireguard config",
@@ -663,18 +685,18 @@ func TestConnectWireGuard_ErrorCases(t *testing.T) {
 	t.Run("gateway route error (warning only)", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"install -m 0600 /dev/stdin /run/net/wg.conf":                   "",
-				"ip link add dev wg0 type wireguard": "",
-				"wg setconf wg0 /run/net/wg.conf":        "",
-				"ip addr replace 10.0.0.1/24 dev wg0":    "",
-				"ip link set wg0 up":                 "",
+				"install -m 0600 /dev/stdin /run/net/wg.conf": "",
+				"ip link add dev wg0 type wireguard":          "",
+				"wg setconf wg0 /run/net/wg.conf":             "",
+				"ip addr replace 10.0.0.1/24 dev wg0":         "",
+				"ip link set wg0 up":                          "",
 			},
 			errors: map[string]error{
 				"ip route replace default dev wg0": assert.AnError,
 			},
 		}
 		logger := &mockLogger{}
-		manager := &Manager{executor: executor, logger: logger}
+		manager := &Manager{executor: executor, logger: logger, runtimeDir: types.RuntimeDir}
 
 		config := &types.VPNConfig{
 			Config:    "wireguard config",
@@ -706,64 +728,44 @@ func TestGenerateWireGuardKey_Coverage(t *testing.T) {
 	}
 }
 
-// setupTestActiveVPNFile creates a temp directory for testing the active VPN state file
-// Returns the original activeVPNFile path and a cleanup function
-func setupTestActiveVPNFile(t *testing.T) (originalFile string, cleanup func()) {
-	// Save the original file path - we can't change const, so we use a different approach
-	// Create a temp dir and test using direct file operations
-	tempDir := t.TempDir()
-	return tempDir, func() {
-		// Cleanup is automatic with t.TempDir()
-	}
-}
-
 func TestActiveVPNStateFile(t *testing.T) {
 	t.Run("getActiveVPN returns empty when file doesn't exist", func(t *testing.T) {
-		// getActiveVPN reads from the actual path, so if it doesn't exist it returns ""
-		// Remove the file if it exists for this test
-		os.Remove(activeVPNFile)
+		tempDir := t.TempDir()
+		executor := &mockSystemExecutor{}
+		logger := &mockLogger{}
+		configMgr := &mockConfigManager{}
+		manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
 
-		result := getActiveVPN()
+		result := manager.getActiveVPN()
 		assert.Equal(t, "", result)
 	})
 
 	t.Run("setActiveVPN and getActiveVPN roundtrip", func(t *testing.T) {
-		// This test requires the runtime directory to exist
-		// Skip if we can't create it (not running as root)
-		dir := filepath.Dir(activeVPNFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Skipf("Cannot create runtime directory %s: %v", dir, err)
-		}
-		defer os.Remove(activeVPNFile)
-
+		tempDir := t.TempDir()
 		executor := &mockSystemExecutor{}
 		logger := &mockLogger{}
 		configMgr := &mockConfigManager{}
-		manager := NewManager(executor, logger, configMgr)
+		manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
 
 		// Set active VPN
 		err := manager.setActiveVPN("test-vpn")
 		assert.NoError(t, err)
 
 		// Read it back
-		result := getActiveVPN()
+		result := manager.getActiveVPN()
 		assert.Equal(t, "test-vpn", result)
 	})
 
 	t.Run("clearActiveVPN removes the file", func(t *testing.T) {
-		dir := filepath.Dir(activeVPNFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Skipf("Cannot create runtime directory %s: %v", dir, err)
-		}
-
-		// Create the file first
-		os.WriteFile(activeVPNFile, []byte("test-vpn"), 0600)
-		defer os.Remove(activeVPNFile)
-
+		tempDir := t.TempDir()
 		executor := &mockSystemExecutor{}
 		logger := &mockLogger{}
 		configMgr := &mockConfigManager{}
-		manager := NewManager(executor, logger, configMgr)
+		manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
+
+		// Create the file first
+		activeVPNFile := filepath.Join(tempDir, "active-vpn")
+		os.WriteFile(activeVPNFile, []byte("test-vpn"), 0600)
 
 		// Clear it
 		manager.clearActiveVPN()
@@ -776,14 +778,11 @@ func TestActiveVPNStateFile(t *testing.T) {
 
 func TestListVPNs_WithActiveVPNStateFile(t *testing.T) {
 	t.Run("only active VPN shows as connected when state file exists", func(t *testing.T) {
-		dir := filepath.Dir(activeVPNFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Skipf("Cannot create runtime directory %s: %v", dir, err)
-		}
+		tempDir := t.TempDir()
 
 		// Set proton-se as the active VPN
+		activeVPNFile := filepath.Join(tempDir, "active-vpn")
 		os.WriteFile(activeVPNFile, []byte("proton-se"), 0600)
-		defer os.Remove(activeVPNFile)
 
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
@@ -806,7 +805,7 @@ func TestListVPNs_WithActiveVPNStateFile(t *testing.T) {
 				},
 			},
 		}
-		manager := NewManager(executor, logger, configMgr)
+		manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
 
 		vpns, err := manager.ListVPNs()
 		assert.NoError(t, err)
@@ -827,8 +826,8 @@ func TestListVPNs_WithActiveVPNStateFile(t *testing.T) {
 	})
 
 	t.Run("falls back to interface detection when no state file", func(t *testing.T) {
-		// Ensure state file doesn't exist
-		os.Remove(activeVPNFile)
+		tempDir := t.TempDir()
+		// No state file created - temp dir is empty
 
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
@@ -850,7 +849,7 @@ func TestListVPNs_WithActiveVPNStateFile(t *testing.T) {
 				},
 			},
 		}
-		manager := NewManager(executor, logger, configMgr)
+		manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
 
 		vpns, err := manager.ListVPNs()
 		assert.NoError(t, err)
@@ -869,8 +868,8 @@ func TestListVPNs_WithActiveVPNStateFile(t *testing.T) {
 	})
 
 	t.Run("stale interface without peers shows as not connected", func(t *testing.T) {
-		// Ensure state file doesn't exist
-		os.Remove(activeVPNFile)
+		tempDir := t.TempDir()
+		// No state file created - temp dir is empty
 
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
@@ -890,7 +889,7 @@ func TestListVPNs_WithActiveVPNStateFile(t *testing.T) {
 				},
 			},
 		}
-		manager := NewManager(executor, logger, configMgr)
+		manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
 
 		vpns, err := manager.ListVPNs()
 		assert.NoError(t, err)
@@ -902,20 +901,16 @@ func TestListVPNs_WithActiveVPNStateFile(t *testing.T) {
 }
 
 func TestConnect_SetsActiveVPNStateFile(t *testing.T) {
-	dir := filepath.Dir(activeVPNFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Skipf("Cannot create runtime directory %s: %v", dir, err)
-	}
-	defer os.Remove(activeVPNFile)
+	tempDir := t.TempDir()
 
 	executor := &mockSystemExecutor{
 		commands: map[string]string{
-			"install -m 0600 /dev/stdin /run/net/wg.conf": "",
-			"ip link add dev wg0 type wireguard":          "",
-			"wg setconf wg0 /run/net/wg.conf":             "",
-			"rm -f /run/net/wg.conf":                      "",
-			"ip addr replace 10.0.0.1/24 dev wg0":         "",
-			"ip link set wg0 up":                          "",
+			"install -m 0600 /dev/stdin " + tempDir + "/wg.conf": "",
+			"ip link add dev wg0 type wireguard":                 "",
+			"wg setconf wg0 " + tempDir + "/wg.conf":             "",
+			"rm -f " + tempDir + "/wg.conf":                      "",
+			"ip addr replace 10.0.0.1/24 dev wg0":                "",
+			"ip link set wg0 up":                                 "",
 		},
 	}
 	logger := &mockLogger{}
@@ -930,38 +925,35 @@ func TestConnect_SetsActiveVPNStateFile(t *testing.T) {
 			},
 		},
 	}
-	manager := NewManager(executor, logger, configMgr)
+	manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
 
 	err := manager.Connect("test-vpn")
 	assert.NoError(t, err)
 
 	// Verify state file was written
-	result := getActiveVPN()
+	result := manager.getActiveVPN()
 	assert.Equal(t, "test-vpn", result)
 }
 
 func TestDisconnect_ClearsActiveVPNStateFile(t *testing.T) {
-	dir := filepath.Dir(activeVPNFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Skipf("Cannot create runtime directory %s: %v", dir, err)
-	}
+	tempDir := t.TempDir()
 
 	// Create state file first
+	activeVPNFile := filepath.Join(tempDir, "active-vpn")
 	os.WriteFile(activeVPNFile, []byte("test-vpn"), 0600)
-	defer os.Remove(activeVPNFile)
 
 	executor := &mockSystemExecutor{
 		commands: map[string]string{
-			"pkill -f openvpn":             "",
-			"ip link show type wireguard":  "",
-			"ip link delete wg0":           "",
-			"ip link set tun0 down":        "",
-			"ip route show":                "",
+			"pkill -f openvpn":            "",
+			"ip link show type wireguard": "",
+			"ip link delete wg0":          "",
+			"ip link set tun0 down":       "",
+			"ip route show":               "",
 		},
 	}
 	logger := &mockLogger{}
 	configMgr := &mockConfigManager{}
-	manager := NewManager(executor, logger, configMgr)
+	manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
 
 	err := manager.Disconnect("test-vpn")
 	assert.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/angelfreak/net/pkg/system"
 	"github.com/angelfreak/net/pkg/types"
 )
 
@@ -30,6 +31,9 @@ var (
 
 	// IP address parsing
 	inetRegex = regexp.MustCompile(`inet (\d+\.\d+\.\d+\.\d+)`)
+
+	// BSSID validation - exactly 6 pairs of hex digits separated by colons
+	validBSSIDRegex = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$`)
 )
 
 // Manager implements the WiFiManager interface
@@ -375,20 +379,41 @@ func escapeWPAString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	// Escape double quotes
 	s = strings.ReplaceAll(s, `"`, `\"`)
+	// Escape newlines to prevent config injection
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
 	return s
+}
+
+// isValidBSSID validates that a BSSID is in the correct format (XX:XX:XX:XX:XX:XX)
+// This prevents config injection attacks via malformed BSSID values
+func isValidBSSID(bssid string) bool {
+	return validBSSIDRegex.MatchString(bssid)
 }
 
 func (m *Manager) generateWPAConfig(ssid, password string, bssid string) string {
 	// Escape SSID and password to prevent injection
 	escapedSSID := escapeWPAString(ssid)
 
+	// Validate BSSID format to prevent config injection
+	// Invalid BSSIDs are silently ignored (connection will work without pinning)
+	validatedBSSID := ""
+	if bssid != "" && isValidBSSID(bssid) {
+		validatedBSSID = strings.ToLower(bssid) // Normalize to lowercase
+	} else if bssid != "" {
+		m.logger.Warn("Invalid BSSID format, ignoring", "bssid", bssid)
+	}
+
+	// ctrl_interface is required for wpa_cli communication
+	header := "ctrl_interface=/run/wpa_supplicant\n\n"
+
 	if password == "" {
 		// Open network
-		config := fmt.Sprintf(`network={
+		config := header + fmt.Sprintf(`network={
 	ssid="%s"
 	key_mgmt=NONE`, escapedSSID)
-		if bssid != "" {
-			config += fmt.Sprintf("\n\tbssid=%s", bssid)
+		if validatedBSSID != "" {
+			config += fmt.Sprintf("\n\tbssid=%s", validatedBSSID)
 		}
 		config += "\n}"
 		return config
@@ -396,11 +421,11 @@ func (m *Manager) generateWPAConfig(ssid, password string, bssid string) string 
 
 	// WPA2 network
 	escapedPassword := escapeWPAString(password)
-	config := fmt.Sprintf(`network={
+	config := header + fmt.Sprintf(`network={
 	ssid="%s"
 	psk="%s"`, escapedSSID, escapedPassword)
-	if bssid != "" {
-		config += fmt.Sprintf("\n\tbssid=%s", bssid)
+	if validatedBSSID != "" {
+		config += fmt.Sprintf("\n\tbssid=%s", validatedBSSID)
 	}
 	config += "\n}"
 	return config
@@ -411,34 +436,11 @@ func (m *Manager) obtainDHCP(hostname string) error {
 }
 
 func (m *Manager) parseIPAddress(output string) net.IP {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "inet ") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				ip, _, err := net.ParseCIDR(parts[1])
-				if err == nil {
-					return ip
-				}
-			}
-		}
-	}
-	return nil
+	return system.ParseIPFromOutput(output)
 }
 
 func (m *Manager) parseGateway(output string) net.IP {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "default via ") {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				return net.ParseIP(parts[2])
-			}
-		}
-	}
-	return nil
+	return system.ParseGatewayFromOutput(output)
 }
 
 func (m *Manager) getCurrentSSID() (string, error) {
@@ -464,19 +466,7 @@ func (m *Manager) getDNSServers() ([]net.IP, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	var dns []net.IP
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "nameserver ") {
-			ipStr := strings.TrimPrefix(line, "nameserver ")
-			if ip := net.ParseIP(ipStr); ip != nil {
-				dns = append(dns, ip)
-			}
-		}
-	}
-	return dns, nil
+	return system.ParseDNSFromResolvConf(output), nil
 }
 func (m *Manager) decodeSSID(ssid string) string {
 	// Use package-level compiled regex for better performance
@@ -495,8 +485,7 @@ func (m *Manager) decodeSSID(ssid string) string {
 // Uses install command to atomically create file with correct permissions
 // avoiding TOCTOU race where file exists briefly with wrong permissions
 func (m *Manager) writeFile(path, content string) error {
-	_, err := m.executor.ExecuteWithInput("install", content, "-m", "0600", "/dev/stdin", path)
-	return err
+	return system.WriteSecureFile(m.executor, path, content)
 }
 
 func (m *Manager) readFile(path string) (string, error) {
@@ -506,12 +495,7 @@ func (m *Manager) readFile(path string) (string, error) {
 
 // killProcess kills processes matching a pattern with SIGKILL (fast, no graceful shutdown)
 func (m *Manager) killProcess(pattern string) {
-	// For network daemons, just force kill - graceful shutdown isn't critical
-	// This saves ~200-500ms compared to SIGTERM + wait + check + SIGKILL
-	_, err := m.executor.ExecuteWithTimeout(500*time.Millisecond, "pkill", "-9", "-f", pattern)
-	if err != nil {
-		m.logger.Debug("No process to kill or pkill failed", "pattern", pattern)
-	}
+	system.KillProcessFast(m.executor, m.logger, pattern)
 }
 
 // waitForWpaSupplicantReady polls until wpa_supplicant responds to wpa_cli

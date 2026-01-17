@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -372,22 +373,28 @@ freq: 5180
 }
 
 func TestGenerateWPAConfig(t *testing.T) {
-	manager := &Manager{}
+	manager := &Manager{logger: &mockLogger{}}
 
 	t.Run("with password", func(t *testing.T) {
 		config := manager.generateWPAConfig("TestSSID", "password", "")
+		// ctrl_interface is REQUIRED for wpa_cli to communicate with wpa_supplicant
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant", "ctrl_interface is required for wpa_cli communication")
 		assert.Contains(t, config, `ssid="TestSSID"`)
 		assert.Contains(t, config, `psk="password"`)
 	})
 
 	t.Run("open network", func(t *testing.T) {
 		config := manager.generateWPAConfig("OpenSSID", "", "")
+		// ctrl_interface is REQUIRED for wpa_cli to communicate with wpa_supplicant
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant", "ctrl_interface is required for wpa_cli communication")
 		assert.Contains(t, config, `ssid="OpenSSID"`)
 		assert.Contains(t, config, `key_mgmt=NONE`)
 	})
 
 	t.Run("with BSSID pinning", func(t *testing.T) {
 		config := manager.generateWPAConfig("TestSSID", "password", "00:11:22:33:44:55")
+		// ctrl_interface is REQUIRED for wpa_cli to communicate with wpa_supplicant
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant", "ctrl_interface is required for wpa_cli communication")
 		assert.Contains(t, config, `ssid="TestSSID"`)
 		assert.Contains(t, config, `psk="password"`)
 		assert.Contains(t, config, `bssid=00:11:22:33:44:55`)
@@ -396,6 +403,7 @@ func TestGenerateWPAConfig(t *testing.T) {
 	t.Run("escapes special characters in SSID", func(t *testing.T) {
 		// Test SSID with quotes and backslashes
 		config := manager.generateWPAConfig(`Test"SSID\with\special`, "password", "")
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant", "ctrl_interface is required for wpa_cli communication")
 		assert.Contains(t, config, `ssid="Test\"SSID\\with\\special"`)
 		assert.Contains(t, config, `psk="password"`)
 	})
@@ -403,6 +411,7 @@ func TestGenerateWPAConfig(t *testing.T) {
 	t.Run("escapes special characters in password", func(t *testing.T) {
 		// Test password with quotes and backslashes
 		config := manager.generateWPAConfig("TestSSID", `pass"word\with\quotes`, "")
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant", "ctrl_interface is required for wpa_cli communication")
 		assert.Contains(t, config, `ssid="TestSSID"`)
 		assert.Contains(t, config, `psk="pass\"word\\with\\quotes"`)
 	})
@@ -410,9 +419,120 @@ func TestGenerateWPAConfig(t *testing.T) {
 	t.Run("escapes special characters in open network", func(t *testing.T) {
 		// Test open network with special characters in SSID
 		config := manager.generateWPAConfig(`Evil"Network`, "", "")
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant", "ctrl_interface is required for wpa_cli communication")
 		assert.Contains(t, config, `ssid="Evil\"Network"`)
 		assert.Contains(t, config, `key_mgmt=NONE`)
 	})
+
+	t.Run("escapes newlines in SSID to prevent injection", func(t *testing.T) {
+		// Test SSID with newline that could inject additional config
+		config := manager.generateWPAConfig("Evil\nnetwork={\nssid=\"injected\"", "password", "")
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant")
+		// Newlines should be escaped as literal \n (backslash followed by 'n'), not actual newlines
+		assert.Contains(t, config, `ssid="Evil\nnetwork={\nssid=\"injected\""`)
+		// The config should only have actual newlines in expected places (after header, inside network block structure)
+		// NOT from the injected SSID - verify by checking that the SSID value doesn't create separate lines
+		lines := strings.Split(config, "\n")
+		var ssidLine string
+		for _, line := range lines {
+			if strings.Contains(line, "ssid=") {
+				ssidLine = line
+				break
+			}
+		}
+		// The entire SSID with escaped newlines should be on a single line
+		assert.Contains(t, ssidLine, `Evil\nnetwork=`)
+	})
+
+	t.Run("escapes newlines in password to prevent injection", func(t *testing.T) {
+		// Test password with newline that could inject additional config
+		config := manager.generateWPAConfig("TestSSID", "pass\nnetwork={\nssid=\"injected\"", "")
+		assert.Contains(t, config, "ctrl_interface=/run/wpa_supplicant")
+		assert.Contains(t, config, `ssid="TestSSID"`)
+		// Newlines should be escaped as literal \n
+		assert.Contains(t, config, `psk="pass\nnetwork={\nssid=\"injected\""`)
+	})
+
+	t.Run("escapes carriage returns in SSID", func(t *testing.T) {
+		// Test SSID with carriage return
+		config := manager.generateWPAConfig("Evil\rNetwork", "password", "")
+		assert.Contains(t, config, `ssid="Evil\rNetwork"`)
+	})
+
+	t.Run("rejects invalid BSSID to prevent injection", func(t *testing.T) {
+		// Test with malicious BSSID containing config injection attempt
+		config := manager.generateWPAConfig("TestSSID", "password", "00:11:22:33:44:55\nnetwork={\nssid=\"injected\"")
+		assert.Contains(t, config, `ssid="TestSSID"`)
+		assert.Contains(t, config, `psk="password"`)
+		// Invalid BSSID should be silently ignored (not included in config)
+		assert.NotContains(t, config, "bssid=")
+		assert.NotContains(t, config, "injected")
+	})
+
+	t.Run("accepts valid BSSID formats", func(t *testing.T) {
+		// Valid lowercase
+		config := manager.generateWPAConfig("TestSSID", "password", "aa:bb:cc:dd:ee:ff")
+		assert.Contains(t, config, "bssid=aa:bb:cc:dd:ee:ff")
+
+		// Valid uppercase (should be normalized to lowercase)
+		config = manager.generateWPAConfig("TestSSID", "password", "AA:BB:CC:DD:EE:FF")
+		assert.Contains(t, config, "bssid=aa:bb:cc:dd:ee:ff")
+
+		// Valid mixed case
+		config = manager.generateWPAConfig("TestSSID", "password", "Aa:Bb:Cc:Dd:Ee:Ff")
+		assert.Contains(t, config, "bssid=aa:bb:cc:dd:ee:ff")
+	})
+
+	t.Run("rejects various invalid BSSID formats", func(t *testing.T) {
+		invalidBSSIDs := []string{
+			"",                               // empty
+			"aa:bb:cc:dd:ee",                 // too short
+			"aa:bb:cc:dd:ee:ff:00",           // too long
+			"aabbccddeeff",                   // no colons
+			"aa-bb-cc-dd-ee-ff",              // wrong separator
+			"gg:hh:ii:jj:kk:ll",              // invalid hex
+			"00:11:22:33:44:5",               // missing digit
+			"00:11:22:33:44:55 extra",        // extra content
+			"00:11:22:33:44:55\nbssid=evil",  // newline injection
+		}
+
+		for _, invalidBSSID := range invalidBSSIDs {
+			config := manager.generateWPAConfig("TestSSID", "password", invalidBSSID)
+			assert.NotContains(t, config, "bssid=", "invalid BSSID %q should be rejected", invalidBSSID)
+		}
+	})
+}
+
+func TestIsValidBSSID(t *testing.T) {
+	validCases := []string{
+		"00:11:22:33:44:55",
+		"aa:bb:cc:dd:ee:ff",
+		"AA:BB:CC:DD:EE:FF",
+		"Aa:Bb:Cc:Dd:Ee:Ff",
+		"ff:ff:ff:ff:ff:ff",
+		"00:00:00:00:00:00",
+	}
+
+	for _, bssid := range validCases {
+		assert.True(t, isValidBSSID(bssid), "expected %q to be valid", bssid)
+	}
+
+	invalidCases := []string{
+		"",
+		"aa:bb:cc:dd:ee",
+		"aa:bb:cc:dd:ee:ff:00",
+		"aabbccddeeff",
+		"aa-bb-cc-dd-ee-ff",
+		"gg:hh:ii:jj:kk:ll",
+		"00:11:22:33:44:5",
+		"00:11:22:33:44:55 ",
+		" 00:11:22:33:44:55",
+		"00:11:22:33:44:55\n",
+	}
+
+	for _, bssid := range invalidCases {
+		assert.False(t, isValidBSSID(bssid), "expected %q to be invalid", bssid)
+	}
 }
 
 func TestObtainDHCP(t *testing.T) {

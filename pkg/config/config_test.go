@@ -13,11 +13,15 @@ import (
 )
 
 // mockLogger for testing
-type mockLogger struct{}
+type mockLogger struct {
+	warnMessages []string
+}
 
 func (m *mockLogger) Debug(msg string, fields ...interface{}) {}
 func (m *mockLogger) Info(msg string, fields ...interface{})  {}
-func (m *mockLogger) Warn(msg string, fields ...interface{})  {}
+func (m *mockLogger) Warn(msg string, fields ...interface{}) {
+	m.warnMessages = append(m.warnMessages, msg)
+}
 func (m *mockLogger) Error(msg string, fields ...interface{}) {}
 
 func TestNewManager(t *testing.T) {
@@ -52,6 +56,10 @@ func TestLoadConfig(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				// Unset SUDO_USER to test HOME-based path resolution
+				// (SUDO_USER takes priority over HOME in production)
+				oldSudoUser := os.Getenv("SUDO_USER")
+				os.Unsetenv("SUDO_USER")
 				// Set HOME BEFORE creating the config dir structure
 				oldHome := os.Getenv("HOME")
 				os.Setenv("HOME", home)
@@ -67,6 +75,9 @@ testnet:
 				os.WriteFile(configPath, []byte(configContent), 0644)
 				return func() {
 					os.Setenv("HOME", oldHome)
+					if oldSudoUser != "" {
+						os.Setenv("SUDO_USER", oldSudoUser)
+					}
 					os.RemoveAll(home)
 				}
 			},
@@ -84,6 +95,9 @@ testnet:
 				if err != nil {
 					panic(err)
 				}
+				// Unset SUDO_USER to test HOME-based tilde expansion
+				oldSudoUser := os.Getenv("SUDO_USER")
+				os.Unsetenv("SUDO_USER")
 				// Set HOME BEFORE creating the config file
 				oldHome := os.Getenv("HOME")
 				os.Setenv("HOME", home)
@@ -95,6 +109,9 @@ testnet:
 				os.WriteFile(configPath, []byte(configContent), 0644)
 				return func() {
 					os.Setenv("HOME", oldHome)
+					if oldSudoUser != "" {
+						os.Setenv("SUDO_USER", oldSudoUser)
+					}
 					os.RemoveAll(home)
 				}
 			},
@@ -150,11 +167,17 @@ func TestLoadConfig_NetworkLoading(t *testing.T) {
 	// Create unique temp dir to avoid conflicts
 	home, err := os.MkdirTemp("", "test_home_netload_*")
 	require.NoError(t, err)
+	// Unset SUDO_USER to test HOME-based path resolution
+	oldSudoUser := os.Getenv("SUDO_USER")
+	os.Unsetenv("SUDO_USER")
 	// Set HOME BEFORE creating the config dir structure
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", home)
 	defer func() {
 		os.Setenv("HOME", oldHome)
+		if oldSudoUser != "" {
+			os.Setenv("SUDO_USER", oldSudoUser)
+		}
 		os.RemoveAll(home)
 	}()
 
@@ -195,11 +218,17 @@ func TestGetNetworkConfig(t *testing.T) {
 	// Create unique temp dir to avoid conflicts
 	home, err := os.MkdirTemp("", "test_home_get_network_*")
 	require.NoError(t, err)
+	// Unset SUDO_USER to test HOME-based path resolution
+	oldSudoUser := os.Getenv("SUDO_USER")
+	os.Unsetenv("SUDO_USER")
 	// Set HOME BEFORE creating the config dir structure
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", home)
 	defer func() {
 		os.Setenv("HOME", oldHome)
+		if oldSudoUser != "" {
+			os.Setenv("SUDO_USER", oldSudoUser)
+		}
 		os.RemoveAll(home)
 	}()
 
@@ -573,11 +602,17 @@ func TestLoadConfig_WithValidationErrors(t *testing.T) {
 	// Create unique temp dir to avoid conflicts
 	home, err := os.MkdirTemp("", "test_home_validation_*")
 	require.NoError(t, err)
+	// Unset SUDO_USER to test HOME-based path resolution
+	oldSudoUser := os.Getenv("SUDO_USER")
+	os.Unsetenv("SUDO_USER")
 	// Set HOME BEFORE creating the config dir structure
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", home)
 	defer func() {
 		os.Setenv("HOME", oldHome)
+		if oldSudoUser != "" {
+			os.Setenv("SUDO_USER", oldSudoUser)
+		}
 		os.RemoveAll(home)
 	}()
 
@@ -622,4 +657,165 @@ func TestLevenshteinDistance(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestContainsPrivateKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   string
+		expected bool
+	}{
+		{
+			name:     "empty config",
+			config:   "",
+			expected: false,
+		},
+		{
+			name:     "wireguard private key",
+			config:   "[Interface]\nPrivateKey = abc123xyz",
+			expected: true,
+		},
+		{
+			name: "openvpn inline key",
+			config: `<key>
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBg...
+-----END PRIVATE KEY-----
+</key>`,
+			expected: true,
+		},
+		{
+			name: "pem format key",
+			config: `-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA...
+-----END RSA PRIVATE KEY-----`,
+			expected: true,
+		},
+		{
+			name: "ec private key",
+			config: `-----BEGIN EC PRIVATE KEY-----
+MHQCAQEEIGk...
+-----END EC PRIVATE KEY-----`,
+			expected: true,
+		},
+		{
+			name:     "config without private key",
+			config:   "[Interface]\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = xyz",
+			expected: false,
+		},
+		{
+			name:     "openvpn config referencing file",
+			config:   "client\nremote vpn.example.com\nca /etc/openvpn/ca.crt\nkey /etc/openvpn/client.key",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := containsPrivateKey(tt.config)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestWarnAboutPlainTextCredentials(t *testing.T) {
+	t.Run("warns about psk", func(t *testing.T) {
+		logger := &mockLogger{}
+		manager := NewManager(logger)
+		manager.config = &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"home": {SSID: "HomeWiFi", PSK: "mypassword123"},
+				"work": {SSID: "WorkWiFi"}, // no PSK
+			},
+			VPN: map[string]types.VPNConfig{},
+		}
+
+		manager.WarnAboutPlainTextCredentials()
+
+		assert.Len(t, logger.warnMessages, 1)
+		assert.Contains(t, logger.warnMessages[0], "WiFi password")
+	})
+
+	t.Run("warns about vpn private key", func(t *testing.T) {
+		logger := &mockLogger{}
+		manager := NewManager(logger)
+		manager.config = &types.Config{
+			Networks: map[string]types.NetworkConfig{},
+			VPN: map[string]types.VPNConfig{
+				"myvpn": {
+					Type:   "wireguard",
+					Config: "[Interface]\nPrivateKey = abc123xyz\n\n[Peer]\nPublicKey = xyz",
+				},
+			},
+		}
+
+		manager.WarnAboutPlainTextCredentials()
+
+		assert.Len(t, logger.warnMessages, 1)
+		assert.Contains(t, logger.warnMessages[0], "VPN contains private key")
+	})
+
+	t.Run("warns about both psk and vpn key", func(t *testing.T) {
+		logger := &mockLogger{}
+		manager := NewManager(logger)
+		manager.config = &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"home": {SSID: "HomeWiFi", PSK: "mypassword123"},
+			},
+			VPN: map[string]types.VPNConfig{
+				"myvpn": {
+					Type:   "wireguard",
+					Config: "[Interface]\nPrivateKey = abc123xyz",
+				},
+			},
+		}
+
+		manager.WarnAboutPlainTextCredentials()
+
+		assert.Len(t, logger.warnMessages, 2)
+	})
+
+	t.Run("no warnings for safe config", func(t *testing.T) {
+		logger := &mockLogger{}
+		manager := NewManager(logger)
+		manager.config = &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"open": {SSID: "OpenWiFi"}, // no PSK
+			},
+			VPN: map[string]types.VPNConfig{
+				"myvpn": {
+					Type:   "wireguard",
+					Config: "/etc/wireguard/wg0.conf", // file path, no inline key
+				},
+			},
+		}
+
+		manager.WarnAboutPlainTextCredentials()
+
+		assert.Len(t, logger.warnMessages, 0)
+	})
+
+	t.Run("nil config", func(t *testing.T) {
+		logger := &mockLogger{}
+		manager := NewManager(logger)
+		manager.config = nil
+
+		// Should not panic
+		manager.WarnAboutPlainTextCredentials()
+
+		assert.Len(t, logger.warnMessages, 0)
+	})
+
+	t.Run("nil logger", func(t *testing.T) {
+		manager := NewManager(nil)
+		manager.config = &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"home": {SSID: "HomeWiFi", PSK: "password"},
+			},
+			VPN: map[string]types.VPNConfig{},
+		}
+
+		// Should not panic
+		manager.WarnAboutPlainTextCredentials()
+	})
 }
