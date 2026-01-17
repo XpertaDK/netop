@@ -31,6 +31,9 @@ var (
 
 	// IP address parsing
 	inetRegex = regexp.MustCompile(`inet (\d+\.\d+\.\d+\.\d+)`)
+
+	// BSSID validation - exactly 6 pairs of hex digits separated by colons
+	validBSSIDRegex = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$`)
 )
 
 // Manager implements the WiFiManager interface
@@ -382,9 +385,24 @@ func escapeWPAString(s string) string {
 	return s
 }
 
+// isValidBSSID validates that a BSSID is in the correct format (XX:XX:XX:XX:XX:XX)
+// This prevents config injection attacks via malformed BSSID values
+func isValidBSSID(bssid string) bool {
+	return validBSSIDRegex.MatchString(bssid)
+}
+
 func (m *Manager) generateWPAConfig(ssid, password string, bssid string) string {
 	// Escape SSID and password to prevent injection
 	escapedSSID := escapeWPAString(ssid)
+
+	// Validate BSSID format to prevent config injection
+	// Invalid BSSIDs are silently ignored (connection will work without pinning)
+	validatedBSSID := ""
+	if bssid != "" && isValidBSSID(bssid) {
+		validatedBSSID = strings.ToLower(bssid) // Normalize to lowercase
+	} else if bssid != "" {
+		m.logger.Warn("Invalid BSSID format, ignoring", "bssid", bssid)
+	}
 
 	// ctrl_interface is required for wpa_cli communication
 	header := "ctrl_interface=/run/wpa_supplicant\n\n"
@@ -394,8 +412,8 @@ func (m *Manager) generateWPAConfig(ssid, password string, bssid string) string 
 		config := header + fmt.Sprintf(`network={
 	ssid="%s"
 	key_mgmt=NONE`, escapedSSID)
-		if bssid != "" {
-			config += fmt.Sprintf("\n\tbssid=%s", bssid)
+		if validatedBSSID != "" {
+			config += fmt.Sprintf("\n\tbssid=%s", validatedBSSID)
 		}
 		config += "\n}"
 		return config
@@ -406,8 +424,8 @@ func (m *Manager) generateWPAConfig(ssid, password string, bssid string) string 
 	config := header + fmt.Sprintf(`network={
 	ssid="%s"
 	psk="%s"`, escapedSSID, escapedPassword)
-	if bssid != "" {
-		config += fmt.Sprintf("\n\tbssid=%s", bssid)
+	if validatedBSSID != "" {
+		config += fmt.Sprintf("\n\tbssid=%s", validatedBSSID)
 	}
 	config += "\n}"
 	return config

@@ -373,7 +373,7 @@ freq: 5180
 }
 
 func TestGenerateWPAConfig(t *testing.T) {
-	manager := &Manager{}
+	manager := &Manager{logger: &mockLogger{}}
 
 	t.Run("with password", func(t *testing.T) {
 		config := manager.generateWPAConfig("TestSSID", "password", "")
@@ -458,6 +458,81 @@ func TestGenerateWPAConfig(t *testing.T) {
 		config := manager.generateWPAConfig("Evil\rNetwork", "password", "")
 		assert.Contains(t, config, `ssid="Evil\rNetwork"`)
 	})
+
+	t.Run("rejects invalid BSSID to prevent injection", func(t *testing.T) {
+		// Test with malicious BSSID containing config injection attempt
+		config := manager.generateWPAConfig("TestSSID", "password", "00:11:22:33:44:55\nnetwork={\nssid=\"injected\"")
+		assert.Contains(t, config, `ssid="TestSSID"`)
+		assert.Contains(t, config, `psk="password"`)
+		// Invalid BSSID should be silently ignored (not included in config)
+		assert.NotContains(t, config, "bssid=")
+		assert.NotContains(t, config, "injected")
+	})
+
+	t.Run("accepts valid BSSID formats", func(t *testing.T) {
+		// Valid lowercase
+		config := manager.generateWPAConfig("TestSSID", "password", "aa:bb:cc:dd:ee:ff")
+		assert.Contains(t, config, "bssid=aa:bb:cc:dd:ee:ff")
+
+		// Valid uppercase (should be normalized to lowercase)
+		config = manager.generateWPAConfig("TestSSID", "password", "AA:BB:CC:DD:EE:FF")
+		assert.Contains(t, config, "bssid=aa:bb:cc:dd:ee:ff")
+
+		// Valid mixed case
+		config = manager.generateWPAConfig("TestSSID", "password", "Aa:Bb:Cc:Dd:Ee:Ff")
+		assert.Contains(t, config, "bssid=aa:bb:cc:dd:ee:ff")
+	})
+
+	t.Run("rejects various invalid BSSID formats", func(t *testing.T) {
+		invalidBSSIDs := []string{
+			"",                               // empty
+			"aa:bb:cc:dd:ee",                 // too short
+			"aa:bb:cc:dd:ee:ff:00",           // too long
+			"aabbccddeeff",                   // no colons
+			"aa-bb-cc-dd-ee-ff",              // wrong separator
+			"gg:hh:ii:jj:kk:ll",              // invalid hex
+			"00:11:22:33:44:5",               // missing digit
+			"00:11:22:33:44:55 extra",        // extra content
+			"00:11:22:33:44:55\nbssid=evil",  // newline injection
+		}
+
+		for _, invalidBSSID := range invalidBSSIDs {
+			config := manager.generateWPAConfig("TestSSID", "password", invalidBSSID)
+			assert.NotContains(t, config, "bssid=", "invalid BSSID %q should be rejected", invalidBSSID)
+		}
+	})
+}
+
+func TestIsValidBSSID(t *testing.T) {
+	validCases := []string{
+		"00:11:22:33:44:55",
+		"aa:bb:cc:dd:ee:ff",
+		"AA:BB:CC:DD:EE:FF",
+		"Aa:Bb:Cc:Dd:Ee:Ff",
+		"ff:ff:ff:ff:ff:ff",
+		"00:00:00:00:00:00",
+	}
+
+	for _, bssid := range validCases {
+		assert.True(t, isValidBSSID(bssid), "expected %q to be valid", bssid)
+	}
+
+	invalidCases := []string{
+		"",
+		"aa:bb:cc:dd:ee",
+		"aa:bb:cc:dd:ee:ff:00",
+		"aabbccddeeff",
+		"aa-bb-cc-dd-ee-ff",
+		"gg:hh:ii:jj:kk:ll",
+		"00:11:22:33:44:5",
+		"00:11:22:33:44:55 ",
+		" 00:11:22:33:44:55",
+		"00:11:22:33:44:55\n",
+	}
+
+	for _, bssid := range invalidCases {
+		assert.False(t, isValidBSSID(bssid), "expected %q to be invalid", bssid)
+	}
 }
 
 func TestObtainDHCP(t *testing.T) {

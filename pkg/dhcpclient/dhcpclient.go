@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/angelfreak/net/pkg/system"
 	"github.com/angelfreak/net/pkg/types"
 )
 
@@ -194,18 +195,5 @@ func (m *Manager) logAcquiredIP(iface string) {
 
 // parseIPAddress extracts the first IPv4 address from ip addr output
 func (m *Manager) parseIPAddress(output string) net.IP {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "inet ") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				ip, _, err := net.ParseCIDR(parts[1])
-				if err == nil {
-					return ip
-				}
-			}
-		}
-	}
-	return nil
+	return system.ParseIPFromOutput(output)
 }
