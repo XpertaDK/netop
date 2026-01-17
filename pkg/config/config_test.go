@@ -52,6 +52,10 @@ func TestLoadConfig(t *testing.T) {
 				if err != nil {
 					panic(err)
 				}
+				// Unset SUDO_USER to test HOME-based path resolution
+				// (SUDO_USER takes priority over HOME in production)
+				oldSudoUser := os.Getenv("SUDO_USER")
+				os.Unsetenv("SUDO_USER")
 				// Set HOME BEFORE creating the config dir structure
 				oldHome := os.Getenv("HOME")
 				os.Setenv("HOME", home)
@@ -67,6 +71,9 @@ testnet:
 				os.WriteFile(configPath, []byte(configContent), 0644)
 				return func() {
 					os.Setenv("HOME", oldHome)
+					if oldSudoUser != "" {
+						os.Setenv("SUDO_USER", oldSudoUser)
+					}
 					os.RemoveAll(home)
 				}
 			},
@@ -84,6 +91,9 @@ testnet:
 				if err != nil {
 					panic(err)
 				}
+				// Unset SUDO_USER to test HOME-based tilde expansion
+				oldSudoUser := os.Getenv("SUDO_USER")
+				os.Unsetenv("SUDO_USER")
 				// Set HOME BEFORE creating the config file
 				oldHome := os.Getenv("HOME")
 				os.Setenv("HOME", home)
@@ -95,6 +105,9 @@ testnet:
 				os.WriteFile(configPath, []byte(configContent), 0644)
 				return func() {
 					os.Setenv("HOME", oldHome)
+					if oldSudoUser != "" {
+						os.Setenv("SUDO_USER", oldSudoUser)
+					}
 					os.RemoveAll(home)
 				}
 			},
@@ -150,11 +163,17 @@ func TestLoadConfig_NetworkLoading(t *testing.T) {
 	// Create unique temp dir to avoid conflicts
 	home, err := os.MkdirTemp("", "test_home_netload_*")
 	require.NoError(t, err)
+	// Unset SUDO_USER to test HOME-based path resolution
+	oldSudoUser := os.Getenv("SUDO_USER")
+	os.Unsetenv("SUDO_USER")
 	// Set HOME BEFORE creating the config dir structure
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", home)
 	defer func() {
 		os.Setenv("HOME", oldHome)
+		if oldSudoUser != "" {
+			os.Setenv("SUDO_USER", oldSudoUser)
+		}
 		os.RemoveAll(home)
 	}()
 
@@ -195,11 +214,17 @@ func TestGetNetworkConfig(t *testing.T) {
 	// Create unique temp dir to avoid conflicts
 	home, err := os.MkdirTemp("", "test_home_get_network_*")
 	require.NoError(t, err)
+	// Unset SUDO_USER to test HOME-based path resolution
+	oldSudoUser := os.Getenv("SUDO_USER")
+	os.Unsetenv("SUDO_USER")
 	// Set HOME BEFORE creating the config dir structure
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", home)
 	defer func() {
 		os.Setenv("HOME", oldHome)
+		if oldSudoUser != "" {
+			os.Setenv("SUDO_USER", oldSudoUser)
+		}
 		os.RemoveAll(home)
 	}()
 
@@ -573,11 +598,17 @@ func TestLoadConfig_WithValidationErrors(t *testing.T) {
 	// Create unique temp dir to avoid conflicts
 	home, err := os.MkdirTemp("", "test_home_validation_*")
 	require.NoError(t, err)
+	// Unset SUDO_USER to test HOME-based path resolution
+	oldSudoUser := os.Getenv("SUDO_USER")
+	os.Unsetenv("SUDO_USER")
 	// Set HOME BEFORE creating the config dir structure
 	oldHome := os.Getenv("HOME")
 	os.Setenv("HOME", home)
 	defer func() {
 		os.Setenv("HOME", oldHome)
+		if oldSudoUser != "" {
+			os.Setenv("SUDO_USER", oldSudoUser)
+		}
 		os.RemoveAll(home)
 	}()
 
