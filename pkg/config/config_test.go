@@ -14,11 +14,14 @@ import (
 
 // mockLogger for testing
 type mockLogger struct {
-	warnMessages []string
+	debugMessages []string
+	warnMessages  []string
 }
 
-func (m *mockLogger) Debug(msg string, fields ...interface{}) {}
-func (m *mockLogger) Info(msg string, fields ...interface{})  {}
+func (m *mockLogger) Debug(msg string, fields ...interface{}) {
+	m.debugMessages = append(m.debugMessages, msg)
+}
+func (m *mockLogger) Info(msg string, fields ...interface{}) {}
 func (m *mockLogger) Warn(msg string, fields ...interface{}) {
 	m.warnMessages = append(m.warnMessages, msg)
 }
@@ -719,7 +722,9 @@ MHQCAQEEIGk...
 }
 
 func TestWarnAboutPlainTextCredentials(t *testing.T) {
-	t.Run("warns about psk", func(t *testing.T) {
+	// Note: These are debug-level messages to avoid noise on every invocation
+	// Users can see them with --debug flag
+	t.Run("logs debug message about psk", func(t *testing.T) {
 		logger := &mockLogger{}
 		manager := NewManager(logger)
 		manager.config = &types.Config{
@@ -732,11 +737,11 @@ func TestWarnAboutPlainTextCredentials(t *testing.T) {
 
 		manager.WarnAboutPlainTextCredentials()
 
-		assert.Len(t, logger.warnMessages, 1)
-		assert.Contains(t, logger.warnMessages[0], "WiFi password")
+		assert.Len(t, logger.debugMessages, 1)
+		assert.Contains(t, logger.debugMessages[0], "WiFi password")
 	})
 
-	t.Run("warns about vpn private key", func(t *testing.T) {
+	t.Run("logs debug message about vpn private key", func(t *testing.T) {
 		logger := &mockLogger{}
 		manager := NewManager(logger)
 		manager.config = &types.Config{
@@ -751,11 +756,11 @@ func TestWarnAboutPlainTextCredentials(t *testing.T) {
 
 		manager.WarnAboutPlainTextCredentials()
 
-		assert.Len(t, logger.warnMessages, 1)
-		assert.Contains(t, logger.warnMessages[0], "VPN contains private key")
+		assert.Len(t, logger.debugMessages, 1)
+		assert.Contains(t, logger.debugMessages[0], "VPN contains private key")
 	})
 
-	t.Run("warns about both psk and vpn key", func(t *testing.T) {
+	t.Run("logs debug messages about both psk and vpn key", func(t *testing.T) {
 		logger := &mockLogger{}
 		manager := NewManager(logger)
 		manager.config = &types.Config{
@@ -772,10 +777,10 @@ func TestWarnAboutPlainTextCredentials(t *testing.T) {
 
 		manager.WarnAboutPlainTextCredentials()
 
-		assert.Len(t, logger.warnMessages, 2)
+		assert.Len(t, logger.debugMessages, 2)
 	})
 
-	t.Run("no warnings for safe config", func(t *testing.T) {
+	t.Run("no debug messages for safe config", func(t *testing.T) {
 		logger := &mockLogger{}
 		manager := NewManager(logger)
 		manager.config = &types.Config{
@@ -792,7 +797,7 @@ func TestWarnAboutPlainTextCredentials(t *testing.T) {
 
 		manager.WarnAboutPlainTextCredentials()
 
-		assert.Len(t, logger.warnMessages, 0)
+		assert.Len(t, logger.debugMessages, 0)
 	})
 
 	t.Run("nil config", func(t *testing.T) {

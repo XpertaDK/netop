@@ -570,9 +570,10 @@ func (m *Manager) WarnAboutPlainTextCredentials() {
 	}
 
 	// Check for plain text WiFi passwords (PSK fields)
+	// Use Debug level to avoid noise on every invocation - visible with --debug flag
 	for name, network := range m.config.Networks {
 		if network.PSK != "" {
-			m.logger.Warn("WiFi password for network is stored in plain text",
+			m.logger.Debug("WiFi password for network is stored in plain text",
 				"network", name,
 				"suggestion", "Consider using file permissions (chmod 600) to protect your config file")
 		}
@@ -581,7 +582,7 @@ func (m *Manager) WarnAboutPlainTextCredentials() {
 	// Check for plain text VPN private keys in inline config
 	for name, vpn := range m.config.VPN {
 		if containsPrivateKey(vpn.Config) {
-			m.logger.Warn("VPN contains private key in plain text config",
+			m.logger.Debug("VPN contains private key in plain text config",
 				"vpn", name,
 				"suggestion", "Consider storing keys in separate files with restricted permissions")
 		}
