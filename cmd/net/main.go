@@ -81,12 +81,15 @@ func main() {
 
 	// Ensure runtime directory exists with secure permissions
 	if err := os.MkdirAll(types.RuntimeDir, 0700); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to create runtime directory %s: %v\n", types.RuntimeDir, err)
+		// This should not happen if ensureRoot() worked correctly
+		fmt.Fprintf(os.Stderr, "Error: failed to create runtime directory %s: %v\n", types.RuntimeDir, err)
 		if os.Geteuid() != 0 {
-			fmt.Fprintf(os.Stderr, "Hint: try running with sudo\n")
+			fmt.Fprintf(os.Stderr, "Error: not running as root (euid=%d). The auto-sudo mechanism failed.\n", os.Geteuid())
+			fmt.Fprintf(os.Stderr, "Hint: run with sudo, or configure passwordless sudo for this binary\n")
 		} else {
 			fmt.Fprintf(os.Stderr, "Hint: check filesystem permissions and SELinux/AppArmor policies for %s\n", types.RuntimeDir)
 		}
+		os.Exit(1)
 	}
 
 	var rootCmd = &cobra.Command{
