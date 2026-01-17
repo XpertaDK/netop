@@ -347,8 +347,28 @@ func TestApp_RunScan_Success(t *testing.T) {
 
 	err := app.RunScan(false)
 	assert.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Scanning for networks...")
+	assert.Contains(t, stdout.String(), "Found 2 networks")
 	assert.Contains(t, stdout.String(), "Network1")
 	assert.Contains(t, stdout.String(), "OpenNet")
+}
+
+func TestApp_RunScan_ProgressSuppressedInDebugMode(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	app.Debug = true
+	app.WiFiMgr = &testWiFiManager{
+		networks: []types.WiFiNetwork{
+			{SSID: "Network1", BSSID: "00:11:22:33:44:55", Signal: -50, Security: "WPA2"},
+		},
+	}
+
+	err := app.RunScan(false)
+	assert.NoError(t, err)
+	// Progress messages should NOT appear in debug mode
+	assert.NotContains(t, stdout.String(), "Scanning for networks...")
+	assert.NotContains(t, stdout.String(), "Found 1 networks")
+	// But the actual network output should still appear
+	assert.Contains(t, stdout.String(), "Network1")
 }
 
 func TestApp_RunScan_OpenOnly(t *testing.T) {
@@ -386,6 +406,7 @@ func TestApp_RunConnect_DirectSSID(t *testing.T) {
 
 	err := app.RunConnect("TestSSID", "password123")
 	assert.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Connecting to WiFi...")
 	assert.Contains(t, stdout.String(), "Connected!")
 }
 
@@ -402,6 +423,7 @@ func TestApp_RunConnect_ConfiguredNetwork(t *testing.T) {
 
 	err := app.RunConnect("home", "")
 	assert.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Connecting to WiFi...")
 	assert.Contains(t, stdout.String(), "Connected!")
 }
 
@@ -484,7 +506,7 @@ func TestApp_RunVPN_Connect(t *testing.T) {
 
 	err := app.RunVPN("work")
 	assert.NoError(t, err)
-	assert.Contains(t, stdout.String(), "VPN connected (work)")
+	assert.Contains(t, stdout.String(), "VPN connected!")
 }
 
 func TestApp_RunVPN_Stop(t *testing.T) {
@@ -587,7 +609,8 @@ func TestApp_RunHotspot_Start(t *testing.T) {
 
 	err := app.RunHotspot("start", config)
 	assert.NoError(t, err)
-	assert.Contains(t, stdout.String(), "Hotspot started successfully")
+	assert.Contains(t, stdout.String(), "Starting hotspot...")
+	assert.Contains(t, stdout.String(), "Hotspot 'TestHotspot' started!")
 	assert.Contains(t, stdout.String(), "TestHotspot")
 }
 
@@ -681,7 +704,8 @@ func TestApp_connectVPN_NetworkSpecificVPN(t *testing.T) {
 	}
 
 	app.connectVPN("work")
-	assert.Contains(t, stdout.String(), "VPN connected (work-vpn)")
+	assert.Contains(t, stdout.String(), "Connecting to VPN 'work-vpn'...")
+	assert.Contains(t, stdout.String(), "VPN connected!")
 }
 
 func TestApp_connectVPN_CommonVPN(t *testing.T) {
@@ -698,7 +722,8 @@ func TestApp_connectVPN_CommonVPN(t *testing.T) {
 	}
 
 	app.connectVPN("home")
-	assert.Contains(t, stdout.String(), "VPN connected (default-vpn)")
+	assert.Contains(t, stdout.String(), "Connecting to VPN 'default-vpn'...")
+	assert.Contains(t, stdout.String(), "VPN connected!")
 }
 
 func TestApp_connectVPN_NetworkVPNOverridesCommon(t *testing.T) {
@@ -716,7 +741,8 @@ func TestApp_connectVPN_NetworkVPNOverridesCommon(t *testing.T) {
 
 	app.connectVPN("work")
 	// Should use network-specific VPN, not common
-	assert.Contains(t, stdout.String(), "VPN connected (work-vpn)")
+	assert.Contains(t, stdout.String(), "Connecting to VPN 'work-vpn'...")
+	assert.Contains(t, stdout.String(), "VPN connected!")
 	assert.NotContains(t, stdout.String(), "default-vpn")
 }
 
@@ -798,7 +824,8 @@ func TestApp_RunConnect_WithVPNIntegration(t *testing.T) {
 	err := app.RunConnect("TestSSID", "password")
 	assert.NoError(t, err)
 	assert.Contains(t, stdout.String(), "Connected!")
-	assert.Contains(t, stdout.String(), "VPN connected (auto-vpn)")
+	assert.Contains(t, stdout.String(), "Connecting to VPN 'auto-vpn'...")
+	assert.Contains(t, stdout.String(), "VPN connected!")
 }
 
 func TestApp_RunConnect_NoVPNFlag(t *testing.T) {
