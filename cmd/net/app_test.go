@@ -211,6 +211,14 @@ func (n *testNetworkManager) DHCPRenew(iface, hostname string) error {
 }
 
 func (n *testNetworkManager) ConnectToConfiguredNetwork(config *types.NetworkConfig, password string, wifiMgr types.WiFiManager) error {
+	// Simulate real behavior: auto-detect sets config.Interface
+	if config.Interface == "" {
+		if config.SSID != "" {
+			config.Interface = "wlan0"
+		} else {
+			config.Interface = "eth0"
+		}
+	}
 	return n.connectErr
 }
 
@@ -425,6 +433,35 @@ func TestApp_RunConnect_ConfiguredNetwork(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, stdout.String(), "Connecting to WiFi...")
 	assert.Contains(t, stdout.String(), "Connected!")
+}
+
+func TestApp_RunConnect_WiredNetwork(t *testing.T) {
+	app, stdout, _ := newTestApp()
+	// Wired profile: no SSID
+	app.ConfigMgr = &testConfigManager{
+		networkConfig: &types.NetworkConfig{},
+		config: &types.Config{
+			Networks: map[string]types.NetworkConfig{
+				"wired": {},
+			},
+		},
+	}
+	app.WiFiMgr = &testWiFiManager{
+		connections: []types.Connection{
+			{Interface: "eth0", State: "connected", IP: net.ParseIP("192.168.1.189")},
+		},
+	}
+
+	err := app.RunConnect("wired", "")
+	assert.NoError(t, err)
+
+	output := stdout.String()
+	// Should say "wired", not "WiFi"
+	assert.Contains(t, output, "Connecting to wired network...")
+	assert.NotContains(t, output, "Connecting to WiFi")
+	// Should display connection info
+	assert.Contains(t, output, "Connected!")
+	assert.Contains(t, output, "192.168.1.189")
 }
 
 func TestApp_RunStop_AllServices(t *testing.T) {
