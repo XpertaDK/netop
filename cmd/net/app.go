@@ -203,18 +203,19 @@ func (a *App) RunConnect(name, password string) error {
 			password = networkConfig.PSK
 		}
 		a.Logger.Debug("Using network config", "configSSID", networkConfig.SSID)
-		a.progress("Connecting to WiFi...\n")
+		if networkConfig.SSID != "" {
+			a.progress("Connecting to WiFi...\n")
+		} else {
+			a.progress("Connecting to wired network...\n")
+		}
 		err = a.NetworkMgr.ConnectToConfiguredNetwork(networkConfig, password, a.WiFiMgr)
 		if err != nil {
 			a.Logger.Error("Failed to connect to configured network", "error", err)
 			a.errorf("Error: %v\n", err)
 			return err
 		}
-		if networkConfig.Interface != "" {
-			connectedIface = networkConfig.Interface
-		} else {
-			connectedIface = a.WiFiMgr.GetInterface()
-		}
+		// ConnectToConfiguredNetwork sets networkConfig.Interface via auto-detection
+		connectedIface = networkConfig.Interface
 	}
 
 	// Display connection information (includes "Connected!" message)
