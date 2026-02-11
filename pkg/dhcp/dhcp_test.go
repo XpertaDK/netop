@@ -4,13 +4,42 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/angelfreak/net/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
+
+// startFakeProcess starts a background process whose /proc/pid/comm matches
+// the given name. Returns the PID as a string and a cleanup function.
+func startFakeProcess(name string) (string, func()) {
+	tmpDir, err := os.MkdirTemp("", "fakeproc-*")
+	if err != nil {
+		return "1", func() {}
+	}
+
+	fakeBin := filepath.Join(tmpDir, name)
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\nsleep 300\n"), 0755); err != nil {
+		os.RemoveAll(tmpDir)
+		return "1", func() {}
+	}
+
+	cmd := exec.Command(fakeBin)
+	if err := cmd.Start(); err != nil {
+		os.RemoveAll(tmpDir)
+		return "1", func() {}
+	}
+	pid := strconv.Itoa(cmd.Process.Pid)
+	return pid, func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+		os.RemoveAll(tmpDir)
+	}
+}
 
 // Mock implementations
 type mockExecutor struct {
@@ -175,8 +204,10 @@ func TestStart_AlreadyRunning(t *testing.T) {
 		IPRange:   "192.168.100.50,192.168.100.150",
 	}
 
-	// Simulate running process by creating PID file pointing to PID 1
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Simulate running process with correct /proc/pid/comm name
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 
 	// Mock commands
 	executor.commands["ip link set eth0 down"] = ""
@@ -235,10 +266,12 @@ func TestStop_Success(t *testing.T) {
 		Gateway:   "192.168.100.1",
 	}
 
-	// Create mock PID file pointing to PID 1
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Create fake process with correct /proc/pid/comm name
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 
-	executor.commands["kill 1"] = ""
+	executor.commands["kill "+dnsmasqPid] = ""
 	executor.commands["ip addr flush dev eth0"] = ""
 	executor.commands["ip link set eth0 down"] = ""
 
@@ -267,9 +300,12 @@ func TestStop_KillFails(t *testing.T) {
 		Interface: "eth0",
 	}
 
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Create fake process with correct /proc/pid/comm name
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 
-	executor.errors["kill 1"] = fmt.Errorf("no such process")
+	executor.errors["kill "+dnsmasqPid] = fmt.Errorf("no such process")
 
 	err := mgr.Stop()
 
@@ -284,8 +320,10 @@ func TestIsRunning(t *testing.T) {
 	// Test when not running
 	assert.False(t, mgr.IsRunning())
 
-	// Test when running
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Test when running - need fake process with correct comm name
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 	assert.True(t, mgr.IsRunning())
 }
 
@@ -372,8 +410,14 @@ func TestDnsmasqRunning(t *testing.T) {
 	os.WriteFile(mgr.dnsmasqPidFile, []byte("99999"), 0644)
 	assert.False(t, mgr.dnsmasqRunning())
 
-	// Test when PID file exists and process exists
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Test when PID file exists but process name doesn't match
+	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644) // PID 1 is systemd, not dnsmasq
+	assert.False(t, mgr.dnsmasqRunning())
+
+	// Test when PID file exists and process name matches
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 	assert.True(t, mgr.dnsmasqRunning())
 }
 
