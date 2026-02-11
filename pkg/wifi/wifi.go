@@ -142,6 +142,10 @@ func (m *Manager) ConnectWithBSSID(ssid, password, bssid, hostname string) error
 	if err != nil {
 		return fmt.Errorf("failed to write WPA config: %w", err)
 	}
+	// Clean up credentials file after wpa_supplicant reads it
+	defer func() {
+		_, _ = m.executor.Execute("rm", "-f", tempConfig)
+	}()
 
 	// Terminate existing wpa_supplicant for this interface only
 	m.terminateWpaSupplicant()
