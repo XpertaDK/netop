@@ -2,6 +2,7 @@ package dhcp
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,13 +122,42 @@ func (d *dhcpManagerImpl) validateConfig(config *types.DHCPServerConfig) error {
 	if config.Interface == "" {
 		return fmt.Errorf("interface is required")
 	}
+	if strings.ContainsAny(config.Interface, " \t\n\r/") {
+		return fmt.Errorf("invalid interface name: %q", config.Interface)
+	}
 	if config.Gateway == "" {
 		return fmt.Errorf("gateway is required")
+	}
+	if net.ParseIP(config.Gateway) == nil {
+		return fmt.Errorf("invalid gateway IP address: %q", config.Gateway)
 	}
 	if config.IPRange == "" {
 		return fmt.Errorf("IP range is required")
 	}
+	if err := validateIPRange(config.IPRange); err != nil {
+		return fmt.Errorf("invalid IP range: %w", err)
+	}
+	for _, dns := range config.DNS {
+		if net.ParseIP(dns) == nil {
+			return fmt.Errorf("invalid DNS server: %q", dns)
+		}
+	}
 
+	return nil
+}
+
+// validateIPRange validates that an IP range is in the format "startIP,endIP"
+func validateIPRange(ipRange string) error {
+	parts := strings.Split(ipRange, ",")
+	if len(parts) != 2 {
+		return fmt.Errorf("expected format 'startIP,endIP', got %q", ipRange)
+	}
+	if net.ParseIP(strings.TrimSpace(parts[0])) == nil {
+		return fmt.Errorf("invalid start IP: %q", parts[0])
+	}
+	if net.ParseIP(strings.TrimSpace(parts[1])) == nil {
+		return fmt.Errorf("invalid end IP: %q", parts[1])
+	}
 	return nil
 }
 
@@ -172,7 +202,7 @@ func (d *dhcpManagerImpl) generateDnsmasqConfig(config *types.DHCPServerConfig) 
 	return nil
 }
 
-// dnsmasqRunning checks if dnsmasq is running
+// dnsmasqRunning checks if dnsmasq is running by verifying PID and process name
 func (d *dhcpManagerImpl) dnsmasqRunning() bool {
 	data, err := os.ReadFile(d.dnsmasqPidFile)
 	if err != nil {
@@ -180,13 +210,17 @@ func (d *dhcpManagerImpl) dnsmasqRunning() bool {
 	}
 
 	pid := strings.TrimSpace(string(data))
-	processPath := filepath.Join("/proc", pid)
-
-	if _, err := os.Stat(processPath); err != nil {
+	if pid == "" {
 		return false
 	}
 
-	return true
+	// Verify the process exists AND is dnsmasq (not a reused PID)
+	comm, err := os.ReadFile(filepath.Join("/proc", pid, "comm"))
+	if err != nil {
+		return false
+	}
+
+	return strings.TrimSpace(string(comm)) == "dnsmasq"
 }
 
 // stopDnsmasq stops the dnsmasq process

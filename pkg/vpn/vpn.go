@@ -461,6 +461,8 @@ func (m *Manager) connectOpenVPN(config *types.VPNConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to write OpenVPN config: %w", err)
 	}
+	// Clean up credentials file on all paths (success and failure)
+	defer m.removeFile(tempConfig)
 
 	// PID file for tracking this specific OpenVPN process
 	pidFile := filepath.Join(m.runtimeDir, "openvpn.pid")
@@ -470,7 +472,6 @@ func (m *Manager) connectOpenVPN(config *types.VPNConfig) error {
 	_, err = m.executor.ExecuteWithTimeout(10*time.Second, "openvpn",
 		"--config", tempConfig, "--daemon", "--writepid", pidFile)
 	if err != nil {
-		m.removeFile(tempConfig) // Clean up on failure
 		return fmt.Errorf("failed to start OpenVPN: %w", err)
 	}
 
@@ -485,7 +486,6 @@ func (m *Manager) connectOpenVPN(config *types.VPNConfig) error {
 	}
 	// Clean up on failure
 	system.KillProcessByPID(m.executor, m.logger, pidFile)
-	m.removeFile(tempConfig)
 	return fmt.Errorf("openvpn failed to establish tunnel within 30s")
 }
 
@@ -505,6 +505,8 @@ func (m *Manager) connectWireGuard(config *types.VPNConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to write WireGuard config: %w", err)
 	}
+	// Clean up credentials file on all paths (success and failure)
+	defer m.removeFile(tempConfig)
 
 	// Create WireGuard interface (ignore error if already exists)
 	_, err = m.executor.ExecuteWithTimeout(5*time.Second, "ip", "link", "add", "dev", iface, "type", "wireguard")
@@ -514,8 +516,6 @@ func (m *Manager) connectWireGuard(config *types.VPNConfig) error {
 
 	// Set config
 	_, err = m.executor.ExecuteWithTimeout(5*time.Second, "wg", "setconf", iface, tempConfig)
-	// Clean up temp config file immediately after loading (contains credentials)
-	m.removeFile(tempConfig)
 	if err != nil {
 		return fmt.Errorf("failed to set WireGuard config: %w", err)
 	}

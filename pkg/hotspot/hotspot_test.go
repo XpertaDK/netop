@@ -4,13 +4,42 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/angelfreak/net/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
+
+// startFakeProcess starts a background process whose /proc/pid/comm matches
+// the given name. Returns the PID as a string and a cleanup function.
+func startFakeProcess(name string) (string, func()) {
+	tmpDir, err := os.MkdirTemp("", "fakeproc-*")
+	if err != nil {
+		return "1", func() {}
+	}
+
+	fakeBin := filepath.Join(tmpDir, name)
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\nsleep 300\n"), 0755); err != nil {
+		os.RemoveAll(tmpDir)
+		return "1", func() {}
+	}
+
+	cmd := exec.Command(fakeBin)
+	if err := cmd.Start(); err != nil {
+		os.RemoveAll(tmpDir)
+		return "1", func() {}
+	}
+	pid := strconv.Itoa(cmd.Process.Pid)
+	return pid, func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+		os.RemoveAll(tmpDir)
+	}
+}
 
 // Mock implementations
 type mockExecutor struct {
@@ -144,13 +173,17 @@ func TestStart_Success(t *testing.T) {
 	executor.commands[hostapdCmd] = ""
 	executor.commands[dnsmasqCmd] = ""
 
-	// Simulate hostapd creating PID file when the command is executed
-	// Use PID 1 (init) which always exists
+	// Simulate hostapd/dnsmasq creating PID files with real processes
+	// that have the correct comm name for /proc/pid/comm verification
+	hostapdPid, cleanHostapd := startFakeProcess("hostapd")
+	defer cleanHostapd()
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
 	executor.callbacks[hostapdCmd] = func() {
-		os.WriteFile(mgr.hostapdPidFile, []byte("1"), 0644)
+		os.WriteFile(mgr.hostapdPidFile, []byte(hostapdPid), 0644)
 	}
 	executor.callbacks[dnsmasqCmd] = func() {
-		os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+		os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 	}
 
 	err := mgr.Start(config)
@@ -249,10 +282,13 @@ func TestStart_AlreadyRunning(t *testing.T) {
 		IPRange:   "192.168.50.50,192.168.50.150",
 	}
 
-	// Simulate running processes by creating PID files pointing to existing processes
-	// Use PID 1 (init/systemd) which always exists
-	os.WriteFile(mgr.hostapdPidFile, []byte("1"), 0644)
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Simulate running processes with correct /proc/pid/comm names
+	hostapdPid, cleanHostapd := startFakeProcess("hostapd")
+	defer cleanHostapd()
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.hostapdPidFile, []byte(hostapdPid), 0644)
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 
 	// Mock commands
 	executor.commands["ip link set wlan0 down"] = ""
@@ -319,11 +355,16 @@ func TestStop_Success(t *testing.T) {
 		Gateway:   "192.168.50.1",
 	}
 
-	// Create mock PID files pointing to PID 1 (always exists)
-	os.WriteFile(mgr.hostapdPidFile, []byte("1"), 0644)
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Create fake processes with correct /proc/pid/comm names
+	hostapdPid, cleanHostapd := startFakeProcess("hostapd")
+	defer cleanHostapd()
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.hostapdPidFile, []byte(hostapdPid), 0644)
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 
-	executor.commands["kill 1"] = ""
+	executor.commands["kill "+hostapdPid] = ""
+	executor.commands["kill "+dnsmasqPid] = ""
 	executor.commands["ip addr flush dev wlan0"] = ""
 	executor.commands["ip link set wlan0 down"] = ""
 	executor.commands["iw wlan0 set type managed"] = ""
@@ -355,11 +396,17 @@ func TestStop_PartialFailure(t *testing.T) {
 		Interface: "wlan0",
 	}
 
-	os.WriteFile(mgr.hostapdPidFile, []byte("1"), 0644)
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Create fake processes with correct /proc/pid/comm names
+	hostapdPid, cleanHostapd := startFakeProcess("hostapd")
+	defer cleanHostapd()
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.hostapdPidFile, []byte(hostapdPid), 0644)
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 
-	executor.commands["kill 1"] = ""
-	executor.errors["kill 1"] = fmt.Errorf("no such process")
+	// dnsmasq kill succeeds but hostapd kill fails
+	executor.commands["kill "+dnsmasqPid] = ""
+	executor.errors["kill "+hostapdPid] = fmt.Errorf("no such process")
 	executor.commands["ip addr flush dev wlan0"] = ""
 	executor.commands["ip link set wlan0 down"] = ""
 	executor.commands["iw wlan0 set type managed"] = ""
@@ -387,8 +434,13 @@ func TestGetStatus(t *testing.T) {
 		Gateway:   "192.168.50.1",
 	}
 
-	os.WriteFile(mgr.hostapdPidFile, []byte("1"), 0644)
-	os.WriteFile(mgr.dnsmasqPidFile, []byte("1"), 0644)
+	// Create fake processes with correct /proc/pid/comm names
+	hostapdPid, cleanHostapd := startFakeProcess("hostapd")
+	defer cleanHostapd()
+	dnsmasqPid, cleanDnsmasq := startFakeProcess("dnsmasq")
+	defer cleanDnsmasq()
+	os.WriteFile(mgr.hostapdPidFile, []byte(hostapdPid), 0644)
+	os.WriteFile(mgr.dnsmasqPidFile, []byte(dnsmasqPid), 0644)
 
 	executor.commands["iw dev wlan0 station dump"] = `Station aa:bb:cc:dd:ee:ff (on wlan0)
 	inactive time:	304 ms

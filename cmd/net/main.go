@@ -234,7 +234,26 @@ func findDefaultInterface() string {
 		}
 	}
 
-	// Fallback to wlan0
-	logger.Debug("No wireless interface found, using fallback", "interface", "wlan0")
+	// No wireless interface found, try wired interfaces
+	logger.Debug("No wireless interface found, looking for wired interfaces")
+	wiredOutput, err := sysExecutor.Execute("ip", "-o", "link", "show")
+	if err == nil {
+		for _, line := range strings.Split(wiredOutput, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			name := strings.TrimSuffix(fields[1], ":")
+			if strings.HasPrefix(name, "eth") || strings.HasPrefix(name, "enp") ||
+				strings.HasPrefix(name, "enx") || strings.HasPrefix(name, "eno") ||
+				strings.HasPrefix(name, "ens") {
+				logger.Debug("Found wired interface", "interface", name)
+				return name
+			}
+		}
+	}
+
+	// Last resort fallback
+	logger.Debug("No network interface found, using fallback", "interface", "wlan0")
 	return "wlan0"
 }

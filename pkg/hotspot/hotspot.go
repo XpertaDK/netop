@@ -70,6 +70,7 @@ func (h *hotspotManagerImpl) Start(config *types.HotspotConfig) error {
 
 	// Verify hostapd actually started (poll for up to 5 seconds)
 	if err := h.waitForHostapd(); err != nil {
+		os.Remove(h.hostapdPidFile)
 		h.cleanupInterface(config.Interface)
 		return err
 	}
@@ -308,6 +309,9 @@ func (h *hotspotManagerImpl) validateConfig(config *types.HotspotConfig) error {
 	if config.Interface == "" {
 		return fmt.Errorf("interface is required")
 	}
+	if strings.ContainsAny(config.Interface, " \t\n\r/") {
+		return fmt.Errorf("invalid interface name: %q", config.Interface)
+	}
 	if config.SSID == "" {
 		return fmt.Errorf("SSID is required")
 	}
@@ -320,10 +324,36 @@ func (h *hotspotManagerImpl) validateConfig(config *types.HotspotConfig) error {
 	if config.Gateway == "" {
 		return fmt.Errorf("gateway is required")
 	}
+	if net.ParseIP(config.Gateway) == nil {
+		return fmt.Errorf("invalid gateway IP address: %q", config.Gateway)
+	}
 	if config.IPRange == "" {
 		return fmt.Errorf("IP range is required")
 	}
+	if err := validateIPRange(config.IPRange); err != nil {
+		return fmt.Errorf("invalid IP range: %w", err)
+	}
+	for _, dns := range config.DNS {
+		if net.ParseIP(dns) == nil {
+			return fmt.Errorf("invalid DNS server: %q", dns)
+		}
+	}
 
+	return nil
+}
+
+// validateIPRange validates that an IP range is in the format "startIP,endIP"
+func validateIPRange(ipRange string) error {
+	parts := strings.Split(ipRange, ",")
+	if len(parts) != 2 {
+		return fmt.Errorf("expected format 'startIP,endIP', got %q", ipRange)
+	}
+	if net.ParseIP(strings.TrimSpace(parts[0])) == nil {
+		return fmt.Errorf("invalid start IP: %q", parts[0])
+	}
+	if net.ParseIP(strings.TrimSpace(parts[1])) == nil {
+		return fmt.Errorf("invalid end IP: %q", parts[1])
+	}
 	return nil
 }
 
@@ -441,38 +471,44 @@ func (h *hotspotManagerImpl) isRunning() bool {
 	return h.hostapdRunning() && h.dnsmasqRunning()
 }
 
-// hostapdRunning checks if hostapd is running
+// hostapdRunning checks if hostapd is running by verifying PID and process name
 func (h *hotspotManagerImpl) hostapdRunning() bool {
-	data, err := os.ReadFile(h.hostapdPidFile)
-	if err != nil {
-		return false
-	}
-
-	pid := strings.TrimSpace(string(data))
-	processPath := filepath.Join("/proc", pid)
-
-	if _, err := os.Stat(processPath); err != nil {
-		return false
-	}
-
-	return true
+	return h.processRunning(h.hostapdPidFile, "hostapd")
 }
 
-// dnsmasqRunning checks if dnsmasq is running
+// dnsmasqRunning checks if dnsmasq is running by verifying PID and process name
 func (h *hotspotManagerImpl) dnsmasqRunning() bool {
-	data, err := os.ReadFile(h.dnsmasqPidFile)
+	return h.processRunning(h.dnsmasqPidFile, "dnsmasq")
+}
+
+// processRunning checks if a process from a PID file is running and matches the expected name
+func (h *hotspotManagerImpl) processRunning(pidFile, expectedName string) bool {
+	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return false
 	}
 
 	pid := strings.TrimSpace(string(data))
-	processPath := filepath.Join("/proc", pid)
-
-	if _, err := os.Stat(processPath); err != nil {
+	if pid == "" {
 		return false
 	}
 
-	return true
+	// Verify the process exists AND is the expected program (not a reused PID)
+	commPath := filepath.Join("/proc", pid, "comm")
+	comm, err := os.ReadFile(commPath)
+	if err != nil {
+		return false
+	}
+
+	processName := strings.TrimSpace(string(comm))
+	if processName == expectedName {
+		return true
+	}
+
+	// Fall back to checking if process exists at all (for environments
+	// where comm doesn't match, e.g. wrapper scripts)
+	h.logger.Debug("PID process name mismatch", "pid", pid, "expected", expectedName, "actual", processName)
+	return false
 }
 
 // stopHostapd stops the hostapd process
