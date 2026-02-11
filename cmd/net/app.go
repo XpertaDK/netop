@@ -124,7 +124,9 @@ func (a *App) RunList() error {
 
 	for _, conn := range connections {
 		a.printf("Interface: %s\n", conn.Interface)
-		a.printf("SSID: %s\n", conn.SSID)
+		if conn.SSID != "" {
+			a.printf("SSID: %s\n", conn.SSID)
+		}
 		a.printf("State: %s\n", conn.State)
 		if conn.IP != nil {
 			a.printf("IP: %s\n", conn.IP.String())
@@ -230,26 +232,21 @@ func (a *App) RunConnect(name, password string) error {
 
 // printConnectionInfo displays connection details
 func (a *App) printConnectionInfo(iface string) {
-	connections, err := a.WiFiMgr.ListConnections()
+	conn, err := a.NetworkMgr.GetConnectionInfo(iface)
 	if err != nil {
 		a.Logger.Debug("Failed to get connection info", "error", err)
 		return
 	}
 
-	for _, conn := range connections {
-		if conn.Interface == iface {
-			a.println("Connected!")
-			if conn.IP != nil {
-				a.printf("  IP:      %s\n", conn.IP.String())
-			}
-			if conn.Gateway != nil {
-				a.printf("  Gateway: %s\n", conn.Gateway.String())
-			}
-			if len(conn.DNS) > 0 {
-				a.printf("  DNS:     %v\n", conn.DNS)
-			}
-			return
-		}
+	a.println("Connected!")
+	if conn.IP != nil {
+		a.printf("  IP:      %s\n", conn.IP.String())
+	}
+	if conn.Gateway != nil {
+		a.printf("  Gateway: %s\n", conn.Gateway.String())
+	}
+	if len(conn.DNS) > 0 {
+		a.printf("  DNS:     %v\n", conn.DNS)
 	}
 }
 
@@ -295,13 +292,13 @@ func (a *App) RunStop(interfaces []string) error {
 			stoppedServices = append(stoppedServices, "VPN")
 		}
 
-		// Stop WiFi
-		a.Logger.Debug("Stopping WiFi")
+		// Stop network (WiFi/wired)
+		a.Logger.Debug("Stopping network connection")
 		err = a.WiFiMgr.Disconnect()
 		if err != nil {
-			a.Logger.Error("Failed to disconnect WiFi", "error", err)
+			a.Logger.Error("Failed to disconnect network", "error", err)
 		} else {
-			stoppedServices = append(stoppedServices, "WiFi")
+			stoppedServices = append(stoppedServices, "Network")
 		}
 
 		// Clear DNS configuration
@@ -537,9 +534,9 @@ func (a *App) RunStatus() error {
 	a.println("==============")
 
 	// Get current connection info
-	connections, err := a.WiFiMgr.ListConnections()
-	if err != nil {
-		a.Logger.Debug("Failed to get connection info", "error", err)
+	conn, connErr := a.NetworkMgr.GetConnectionInfo(a.Interface)
+	if connErr != nil {
+		a.Logger.Debug("Failed to get connection info", "error", connErr)
 	}
 
 	// Get hostname
@@ -573,9 +570,7 @@ func (a *App) RunStatus() error {
 		a.printf("MAC:       %s\n", macInfo)
 	}
 
-	if len(connections) > 0 {
-		conn := connections[0]
-
+	if connErr == nil && conn != nil {
 		if conn.SSID != "" {
 			a.printf("SSID:      %s\n", conn.SSID)
 		}

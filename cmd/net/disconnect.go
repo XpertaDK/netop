@@ -8,10 +8,10 @@ import (
 
 var stopCmd = &cobra.Command{
 	Use:   "stop [interface...]",
-	Short: "Disconnect everything (WiFi, VPN, hotspot, DHCP) or specific interfaces",
+	Short: "Disconnect everything (network, VPN, hotspot, DHCP) or specific interfaces",
 	Long: `Stop all network services or bring down specific interfaces.
 
-Without arguments: Stops WiFi, VPN, hotspot, DHCP server, and clears DNS.
+Without arguments: Stops network (WiFi/wired), VPN, hotspot, DHCP server, and clears DNS.
 With arguments: Brings down only the specified interfaces.
 
 Examples:
