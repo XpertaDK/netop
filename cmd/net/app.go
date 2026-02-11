@@ -321,15 +321,20 @@ func (a *App) RunStop(interfaces []string) error {
 		}
 	} else {
 		// Stop specific interfaces
+		var lastErr error
 		for _, iface := range interfaces {
 			a.Logger.Debug("Stopping interface", "interface", iface)
 			_, err := a.Executor.Execute("ip", "link", "set", iface, "down")
 			if err != nil {
 				a.Logger.Error("Failed to stop interface", "interface", iface, "error", err)
-				a.printf("✗ Failed to stop %s\n", iface)
+				a.errorf("✗ Failed to stop %s\n", iface)
+				lastErr = err
 			} else {
 				a.printf("✓ Stopped interface %s\n", iface)
 			}
+		}
+		if lastErr != nil {
+			return lastErr
 		}
 	}
 	return nil
@@ -709,7 +714,7 @@ func (a *App) RunHotspot(action string, config *types.HotspotConfig) error {
 		a.printf("  Clients:   %d\n", status.Clients)
 
 	default:
-		a.printf("Unknown action: %s\n", action)
+		a.errorf("Unknown action: %s\n", action)
 		return fmt.Errorf("unknown action: %s", action)
 	}
 	return nil
@@ -753,7 +758,7 @@ func (a *App) RunDHCPServer(action string, config *types.DHCPServerConfig) error
 		}
 
 	default:
-		a.printf("Unknown action: %s\n", action)
+		a.errorf("Unknown action: %s\n", action)
 		return fmt.Errorf("unknown action: %s", action)
 	}
 	return nil

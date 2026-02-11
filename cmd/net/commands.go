@@ -18,9 +18,13 @@ func getNetworkNames() []string {
 		if err != nil {
 			return nil
 		}
-		// Handle SUDO_USER for sudo execution
-		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
-			home = "/home/" + sudoUser
+		// Handle SUDO_USER for sudo execution (must match pkg/config/config.go logic)
+		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+			if sudoUser == "root" {
+				home = "/root"
+			} else {
+				home = "/home/" + sudoUser
+			}
 		}
 		configFile = home + "/.net/config.yaml"
 	}

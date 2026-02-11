@@ -444,13 +444,19 @@ func (m *Manager) generateMacBookProMAC() string {
 
 func (m *Manager) expandMACTemplate(template string) string {
 	result := template
+	isFirstOctet := true
 	for strings.Contains(result, "??") {
 		randomByte := make([]byte, 1)
 		_, err := rand.Read(randomByte)
 		if err != nil {
 			randomByte[0] = 0x00 // Fallback
 		}
+		if isFirstOctet && strings.Index(result, "??") < 3 {
+			// First octet: set locally-administered bit, clear multicast bit
+			randomByte[0] = (randomByte[0] | 0x02) & 0xfe
+		}
 		result = strings.Replace(result, "??", fmt.Sprintf("%02x", randomByte[0]), 1)
+		isFirstOctet = false
 	}
 	return result
 }
