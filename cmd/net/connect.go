@@ -8,14 +8,16 @@ import (
 
 var connectCmd = &cobra.Command{
 	Use:   "connect <name|ssid> [password]",
-	Short: "Connect to a configured network or WiFi SSID",
+	Short: "Connect to a configured network (WiFi or wired) or WiFi SSID",
 	Long: `Connect to a network by config name or WiFi SSID.
 
 If <name> matches a network in ~/.net/config.yaml, uses that config.
+Profiles without an SSID are treated as wired connections.
 Otherwise, treats it as a WiFi SSID and connects directly.
 
 Examples:
-  net connect home              Use "home" from config
+  net connect home              Use "home" from config (WiFi)
+  net connect wired             Use "wired" from config (Ethernet)
   net connect CoffeeShop        Connect to SSID "CoffeeShop" (open)
   net connect CoffeeShop pass   Connect with password`,
 	Args: cobra.RangeArgs(1, 2),

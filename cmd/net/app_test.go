@@ -183,11 +183,12 @@ func (v *testVPNManager) GenerateWireGuardKey() (string, string, error) {
 
 // testNetworkManager implements types.NetworkManager for testing
 type testNetworkManager struct {
-	mac        string
-	setMACErr  error
-	setDNSErr  error
-	dhcpErr    error
-	connectErr error
+	mac            string
+	setMACErr      error
+	setDNSErr      error
+	dhcpErr        error
+	connectErr     error
+	connectionInfo *types.Connection
 }
 
 func (n *testNetworkManager) SetMAC(iface, mac string) error {
@@ -239,7 +240,10 @@ func (n *testNetworkManager) SetIP(iface, addr, gateway string) error {
 }
 
 func (n *testNetworkManager) GetConnectionInfo(iface string) (*types.Connection, error) {
-	return nil, nil
+	if n.connectionInfo != nil {
+		return n.connectionInfo, nil
+	}
+	return &types.Connection{Interface: iface, State: "connected"}, nil
 }
 
 // testHotspotManager implements types.HotspotManager for testing
@@ -446,9 +450,13 @@ func TestApp_RunConnect_WiredNetwork(t *testing.T) {
 			},
 		},
 	}
-	app.WiFiMgr = &testWiFiManager{
-		connections: []types.Connection{
-			{Interface: "eth0", State: "connected", IP: net.ParseIP("192.168.1.189")},
+	app.NetworkMgr = &testNetworkManager{
+		connectionInfo: &types.Connection{
+			Interface: "eth0",
+			State:     "connected",
+			IP:        net.ParseIP("192.168.1.189"),
+			Gateway:   net.ParseIP("192.168.1.1"),
+			DNS:       []net.IP{net.ParseIP("192.168.1.1")},
 		},
 	}
 
@@ -459,9 +467,10 @@ func TestApp_RunConnect_WiredNetwork(t *testing.T) {
 	// Should say "wired", not "WiFi"
 	assert.Contains(t, output, "Connecting to wired network...")
 	assert.NotContains(t, output, "Connecting to WiFi")
-	// Should display connection info
+	// Should display connection info same as WiFi
 	assert.Contains(t, output, "Connected!")
 	assert.Contains(t, output, "192.168.1.189")
+	assert.Contains(t, output, "192.168.1.1")
 }
 
 func TestApp_RunStop_AllServices(t *testing.T) {
@@ -627,7 +636,15 @@ func TestApp_RunStatus(t *testing.T) {
 			{Interface: "wlan0", SSID: "TestNet", State: "connected", IP: net.ParseIP("192.168.1.100")},
 		},
 	}
-	app.NetworkMgr = &testNetworkManager{mac: "AA:BB:CC:DD:EE:FF"}
+	app.NetworkMgr = &testNetworkManager{
+		mac: "AA:BB:CC:DD:EE:FF",
+		connectionInfo: &types.Connection{
+			Interface: "wlan0",
+			SSID:      "TestNet",
+			State:     "connected",
+			IP:        net.ParseIP("192.168.1.100"),
+		},
+	}
 
 	err := app.RunStatus()
 	assert.NoError(t, err)
