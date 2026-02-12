@@ -834,6 +834,10 @@ func TestConnectToConfiguredNetwork(t *testing.T) {
 	t.Run("wired connection with DHCP", func(t *testing.T) {
 		executor := newMockExecutor()
 		executor.commands["ip link set eth0 up"] = ""
+		executor.commands["chattr -i /etc/resolv.conf"] = ""
+		executor.commands["rm -f /run/net/staging.conf"] = ""
+		executor.commands["tee /run/net/staging.conf"] = ""
+		executor.commands["mv /run/net/staging.conf /etc/resolv.conf"] = ""
 		logger := &mockLogger{}
 		dhcpClient := &mockDHCPClient{}
 		manager := &Manager{executor: executor, logger: logger, dhcpClient: dhcpClient}
@@ -918,13 +922,16 @@ func TestConnectToConfiguredNetwork(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("with DHCP DNS - skips DNS config but unlocks resolv.conf", func(t *testing.T) {
+	t.Run("with DHCP DNS - clears resolv.conf and unlocks for DHCP", func(t *testing.T) {
 		executor := newMockExecutor()
 		executor.commands["ip link set eth0 up"] = ""
 		executor.commands["ip addr flush dev eth0"] = ""
 		executor.commands["ip addr add 192.168.1.100/24 dev eth0"] = ""
 		executor.commands["ip route add default via 192.168.1.1 dev eth0"] = ""
-		executor.commands["chattr -i /etc/resolv.conf"] = "" // Allow unlocking resolv.conf
+		executor.commands["chattr -i /etc/resolv.conf"] = ""
+		executor.commands["rm -f /run/net/staging.conf"] = ""
+		executor.commands["tee /run/net/staging.conf"] = ""
+		executor.commands["mv /run/net/staging.conf /etc/resolv.conf"] = ""
 		logger := &mockLogger{}
 		manager := &Manager{executor: executor, logger: logger}
 
@@ -937,22 +944,21 @@ func TestConnectToConfiguredNetwork(t *testing.T) {
 
 		err := manager.ConnectToConfiguredNetwork(config, "", nil)
 		assert.NoError(t, err)
-		// DNS should NOT be written when set to "dhcp", but resolv.conf should be unlocked
-		// to allow DHCP client to write DNS servers
+		// resolv.conf should be unlocked and cleared so DHCP client can write fresh DNS
 		unlockCalled := false
+		clearCalled := false
 		for _, cmd := range executor.executedCmds {
 			if strings.Contains(cmd, "chattr -i") && strings.Contains(cmd, "resolv.conf") {
 				unlockCalled = true
 			}
-			// Should NOT write to resolv.conf (no tee or mv)
-			if strings.Contains(cmd, "tee") && strings.Contains(cmd, "resolv.conf") {
-				t.Error("should not write to resolv.conf when DNS=dhcp")
-			}
 			if strings.Contains(cmd, "mv") && strings.Contains(cmd, "resolv.conf") {
-				t.Error("should not write to resolv.conf when DNS=dhcp")
+				clearCalled = true
 			}
 		}
 		assert.True(t, unlockCalled, "should unlock resolv.conf for DHCP DNS")
+		assert.True(t, clearCalled, "should clear resolv.conf before DHCP runs")
+		// Verify the placeholder content was written
+		assert.Contains(t, executor.inputsReceived["tee /run/net/staging.conf"], "Waiting for DHCP")
 	})
 
 	t.Run("auto-detect interface falls back when detection finds nothing", func(t *testing.T) {
