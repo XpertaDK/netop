@@ -557,10 +557,16 @@ func (m *Manager) ConnectToConfiguredNetwork(config *types.NetworkConfig, passwo
 	// This applies when: dns: dhcp is set, OR no DNS is configured at all (let DHCP handle it)
 	useDHCPForDNS := config.DNS == nil || len(config.DNS) == 0 || (len(config.DNS) == 1 && config.DNS[0] == "dhcp")
 	if useDHCPForDNS {
-		m.logger.Debug("Unlocking resolv.conf for DHCP DNS")
+		m.logger.Debug("Clearing resolv.conf for DHCP DNS")
 		_, err := m.executor.Execute("chattr", "-i", "/etc/resolv.conf")
 		if err != nil {
 			m.logger.Debug("Failed to unlock resolv.conf (may not be locked)", "error", err)
+		}
+		// Clear stale DNS entries so DHCP client can write fresh ones.
+		// Without this, resolv.conf may retain DNS from a previous connection
+		// (set via SetDNS with chattr +i), and the DHCP client may not overwrite it.
+		if err := m.writeFile("/etc/resolv.conf", "# Waiting for DHCP\n"); err != nil {
+			m.logger.Debug("Failed to clear resolv.conf", "error", err)
 		}
 	}
 
