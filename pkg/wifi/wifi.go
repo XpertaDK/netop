@@ -514,6 +514,11 @@ func (m *Manager) terminateWpaSupplicant() {
 		m.executor.ExecuteWithTimeout(500*time.Millisecond,
 			"pkill", "-9", "-f", fmt.Sprintf("wpa_supplicant.*-i[[:space:]]+%s", m.iface))
 	}
+
+	// Remove stale control socket — after suspend/resume the old wpa_supplicant
+	// process is gone but its socket file remains, causing the new instance to
+	// fail with exit code 255
+	m.executor.Execute("rm", "-f", fmt.Sprintf("/run/wpa_supplicant/%s", m.iface))
 }
 
 // terminateDhclient terminates dhclient for this interface only

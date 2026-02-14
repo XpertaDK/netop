@@ -251,6 +251,7 @@ func TestDisconnect(t *testing.T) {
 		commands: map[string]string{
 			// Interface-specific termination commands
 			"wpa_cli -i wlan0 terminate":                        "",
+			"rm -f /run/wpa_supplicant/wlan0":                   "",
 			"pkill -9 -f dhclient.*wlan0":                       "",
 			"ip addr flush dev wlan0":                           "",
 			"ip route flush dev wlan0":                          "",
@@ -892,7 +893,8 @@ func TestTerminateWpaSupplicant(t *testing.T) {
 	t.Run("graceful termination via wpa_cli succeeds", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"wpa_cli -i wlan0 terminate": "OK",
+				"wpa_cli -i wlan0 terminate":           "OK",
+				"rm -f /run/wpa_supplicant/wlan0":      "",
 			},
 		}
 		logger := &mockLogger{}
@@ -906,6 +908,7 @@ func TestTerminateWpaSupplicant(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
 				"pkill -9 -f wpa_supplicant.*-i[[:space:]]+wlan0": "",
+				"rm -f /run/wpa_supplicant/wlan0":                 "",
 			},
 			errors: map[string]error{
 				"wpa_cli -i wlan0 terminate": assert.AnError,
@@ -921,7 +924,8 @@ func TestTerminateWpaSupplicant(t *testing.T) {
 	t.Run("uses correct interface in wpa_cli", func(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
-				"wpa_cli -i eth0 terminate": "OK",
+				"wpa_cli -i eth0 terminate":       "OK",
+				"rm -f /run/wpa_supplicant/eth0":  "",
 			},
 		}
 		logger := &mockLogger{}
@@ -934,6 +938,7 @@ func TestTerminateWpaSupplicant(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
 				"pkill -9 -f wpa_supplicant.*-i[[:space:]]+wlp2s0": "",
+				"rm -f /run/wpa_supplicant/wlp2s0":                 "",
 			},
 			errors: map[string]error{
 				"wpa_cli -i wlp2s0 terminate": assert.AnError,
@@ -994,7 +999,8 @@ func TestDisconnectInterfaceIsolation(t *testing.T) {
 		executor := &mockSystemExecutor{
 			commands: map[string]string{
 				// Interface-specific commands for wlan0 only
-				"wpa_cli -i wlan0 terminate":  "OK",
+				"wpa_cli -i wlan0 terminate":             "OK",
+				"rm -f /run/wpa_supplicant/wlan0":        "",
 				"pkill -9 -f dhclient.*wlan0": "",
 				"ip addr flush dev wlan0":    "",
 				"ip route flush dev wlan0":   "",
