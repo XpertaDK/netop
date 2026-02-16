@@ -599,6 +599,12 @@ func (m *Manager) ConnectToConfiguredNetwork(config *types.NetworkConfig, passwo
 		m.logger.Debug("No SSID specified in network config - treating as wired connection")
 		// For wired connections, bring up the interface and get DHCP if no static IP
 		if config.Interface != "" {
+			// Flush stale IP addresses and routes — after suspend/resume the old
+			// network state remains on the interface even though the link was down.
+			// Without this, DHCP may add a new IP but the default route won't be set.
+			m.executor.Execute("ip", "addr", "flush", "dev", config.Interface)
+			m.executor.Execute("ip", "route", "flush", "dev", config.Interface)
+
 			m.logger.Info("Bringing up wired interface", "interface", config.Interface)
 			_, err := m.executor.Execute("ip", "link", "set", config.Interface, "up")
 			if err != nil {

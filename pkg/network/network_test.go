@@ -854,6 +854,54 @@ func TestConnectToConfiguredNetwork(t *testing.T) {
 		// DHCP is now handled by the mock DHCPClientManager
 	})
 
+	t.Run("wired connection flushes stale state before DHCP", func(t *testing.T) {
+		// After suspend/resume, stale IPs and routes remain on the interface.
+		// Verify that wired connect flushes them before bringing the interface up.
+		executor := newMockExecutor()
+		executor.commands["ip addr flush dev eth0"] = ""
+		executor.commands["ip route flush dev eth0"] = ""
+		executor.commands["ip link set eth0 up"] = ""
+		executor.commands["chattr -i /etc/resolv.conf"] = ""
+		executor.commands["rm -f /run/net/staging.conf"] = ""
+		executor.commands["tee /run/net/staging.conf"] = ""
+		executor.commands["mv /run/net/staging.conf /etc/resolv.conf"] = ""
+		logger := &mockLogger{}
+		dhcpClient := &mockDHCPClient{}
+		manager := &Manager{executor: executor, logger: logger, dhcpClient: dhcpClient}
+
+		config := &types.NetworkConfig{
+			Interface: "eth0",
+		}
+
+		err := manager.ConnectToConfiguredNetwork(config, "", nil)
+		assert.NoError(t, err)
+
+		// Verify flush commands were called
+		executor.assertCommandExecuted(t, "ip addr flush dev eth0")
+		executor.assertCommandExecuted(t, "ip route flush dev eth0")
+
+		// Verify flush happens before interface up
+		flushAddrIdx := -1
+		flushRouteIdx := -1
+		ifaceUpIdx := -1
+		for i, cmd := range executor.executedCmds {
+			switch cmd {
+			case "ip addr flush dev eth0":
+				if flushAddrIdx == -1 {
+					flushAddrIdx = i
+				}
+			case "ip route flush dev eth0":
+				if flushRouteIdx == -1 {
+					flushRouteIdx = i
+				}
+			case "ip link set eth0 up":
+				ifaceUpIdx = i
+			}
+		}
+		assert.True(t, flushAddrIdx < ifaceUpIdx, "flush addr should come before interface up")
+		assert.True(t, flushRouteIdx < ifaceUpIdx, "flush route should come before interface up")
+	})
+
 	t.Run("static IP configuration", func(t *testing.T) {
 		executor := newMockExecutor()
 		executor.commands["ip link set eth0 up"] = ""
