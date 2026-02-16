@@ -74,6 +74,40 @@ func (m *mockSystemExecutor) HasCommand(cmd string) bool {
 	return m.hasCommands[cmd]
 }
 
+// recordingExecutor wraps mockSystemExecutor to record the order of commands called
+type recordingExecutor struct {
+	mockSystemExecutor
+	calledCommands []string
+}
+
+func (r *recordingExecutor) Execute(cmd string, args ...string) (string, error) {
+	fullCmd := cmd
+	for _, arg := range args {
+		fullCmd += " " + arg
+	}
+	r.calledCommands = append(r.calledCommands, fullCmd)
+	return r.mockSystemExecutor.Execute(cmd, args...)
+}
+
+func (r *recordingExecutor) ExecuteWithTimeout(timeout time.Duration, cmd string, args ...string) (string, error) {
+	fullCmd := cmd
+	for _, arg := range args {
+		fullCmd += " " + arg
+	}
+	r.calledCommands = append(r.calledCommands, fullCmd)
+	return r.mockSystemExecutor.Execute(cmd, args...)
+}
+
+// indexOf returns the index of the first occurrence of s in slice, or -1
+func indexOf(slice []string, s string) int {
+	for i, v := range slice {
+		if v == s {
+			return i
+		}
+	}
+	return -1
+}
+
 type mockLogger struct{}
 
 func (m *mockLogger) Debug(msg string, fields ...interface{}) {}
@@ -244,6 +278,50 @@ SSID: OtherSSID`,
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "timeout waiting for association")
 	})
+}
+
+func TestConnectFlushesStaleStateBeforeConnect(t *testing.T) {
+	// After suspend/resume, wpa_supplicant is dead so getCurrentSSID() returns empty.
+	// The full Disconnect() cleanup is skipped, but stale IPs and routes remain
+	// on the interface. Verify that ConnectWithBSSID() always flushes them.
+	executor := &recordingExecutor{
+		mockSystemExecutor: mockSystemExecutor{
+			commands: map[string]string{
+				"iw wlan0 link":           "Not connected", // post-hibernation: no current SSID
+				"ip link set wlan0 up":    "",
+				"wpa_cli -i wlan0 terminate": "",
+				"ip addr flush dev wlan0": "",
+				"ip route flush dev wlan0": "",
+				"mkdir -p /run/wpa_supplicant": "",
+				"wpa_supplicant -B -i wlan0 -c /run/net/wpa_supplicant.conf -C /run/wpa_supplicant": "",
+				"wpa_cli -i wlan0 status": "wpa_state=COMPLETED\nssid=TestSSID",
+			},
+		},
+	}
+	logger := &mockLogger{}
+	manager := NewManager(executor, logger, "wlan0", &mockDHCPClient{})
+
+	err := manager.Connect("TestSSID", "password", "")
+	assert.NoError(t, err)
+
+	// Verify flush commands were called
+	assert.Contains(t, executor.calledCommands, "ip addr flush dev wlan0",
+		"should flush stale IP addresses before connecting")
+	assert.Contains(t, executor.calledCommands, "ip route flush dev wlan0",
+		"should flush stale routes before connecting")
+
+	// Verify flush happens after terminateWpaSupplicant and before interface up
+	flushAddrIdx := indexOf(executor.calledCommands, "ip addr flush dev wlan0")
+	flushRouteIdx := indexOf(executor.calledCommands, "ip route flush dev wlan0")
+	terminateIdx := indexOf(executor.calledCommands, "wpa_cli -i wlan0 terminate")
+	ifaceUpIdx := indexOf(executor.calledCommands, "ip link set wlan0 up")
+
+	// Find the interface-up that comes AFTER the flush (there may be an earlier one
+	// from other logic, but the one after flush is the pre-wpa_supplicant one)
+	assert.True(t, terminateIdx < flushAddrIdx, "flush addr should come after terminate")
+	assert.True(t, terminateIdx < flushRouteIdx, "flush route should come after terminate")
+	assert.True(t, flushAddrIdx < ifaceUpIdx, "flush addr should come before interface up")
+	assert.True(t, flushRouteIdx < ifaceUpIdx, "flush route should come before interface up")
 }
 
 func TestDisconnect(t *testing.T) {

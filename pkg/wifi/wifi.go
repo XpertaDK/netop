@@ -150,6 +150,12 @@ func (m *Manager) ConnectWithBSSID(ssid, password, bssid, hostname string) error
 	// Terminate existing wpa_supplicant for this interface only
 	m.terminateWpaSupplicant()
 
+	// Flush stale IP addresses and routes — after suspend/resume the old
+	// network state remains on the interface even though the connection is dead.
+	// Without this, DHCP may add a new IP but the default route won't be set.
+	m.executor.Execute("ip", "addr", "flush", "dev", m.iface)
+	m.executor.Execute("ip", "route", "flush", "dev", m.iface)
+
 	// Bring interface up before starting wpa_supplicant
 	_, err = m.executor.Execute("ip", "link", "set", m.iface, "up")
 	if err != nil {
