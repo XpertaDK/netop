@@ -566,8 +566,11 @@ func (m *Manager) ListVPNs() ([]types.VPNStatus, error) {
 				status.Connected = runningNetBird && vpnConfig.Profile == activeNetBirdProfile
 			} else if typeCount[vpnConfig.Type] > 1 {
 				// Ambiguous: multiple same-type daemon VPNs, none tracked.
-				// Report disconnected rather than falsely flag all as up.
+				// Report disconnected rather than falsely flag all as up,
+				// but record that a tunnel of this type IS up so callers do
+				// not present a live VPN as fully down.
 				status.Connected = false
+				status.Ambiguous = liveConnected(vpnConfig.Type, iface)
 			} else {
 				status.Connected = liveConnected(vpnConfig.Type, iface)
 			}

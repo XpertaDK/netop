@@ -175,6 +175,17 @@ type VPNStatus struct {
 	Connected bool
 	Interface string
 	IP        net.IP
+
+	// Ambiguous marks a daemon-backed VPN (netbird, tailscale) that is known
+	// to be up while the specific config entry responsible cannot be
+	// identified — several same-type entries exist and the daemon's active
+	// profile is unreadable (the profile list is per-OS-user, so an
+	// unprivileged caller cannot see root's profiles).
+	//
+	// Connected stays false because attributing the session to one entry
+	// would be a guess; Ambiguous lets callers report that a tunnel exists
+	// rather than claiming everything is down.
+	Ambiguous bool
 }
 
 // HotspotConfig represents hotspot configuration

@@ -584,10 +584,7 @@ func (a *App) RunVPN(arg string) error {
 		}
 
 		for _, v := range vpns {
-			status := "disconnected"
-			if v.Connected {
-				status = "connected"
-			}
+			status := vpnStatusLabel(v)
 			a.printf("%s (%s) - %s\n", v.Name, v.Type, status)
 		}
 		return nil
@@ -924,10 +921,7 @@ func (a *App) RunStatus() error {
 		a.println("(none active)")
 	} else {
 		for _, v := range vpns {
-			status := "disconnected"
-			if v.Connected {
-				status = "connected"
-			}
+			status := vpnStatusLabel(v)
 			a.printf("%s (%s): %s\n", v.Name, v.Type, status)
 			if v.Interface != "" {
 				a.printf("  Interface: %s\n", v.Interface)
@@ -1092,4 +1086,20 @@ func (a *App) RunDHCPServer(action string, config *types.DHCPServerConfig) error
 		return fmt.Errorf("unknown action: %s", action)
 	}
 	return nil
+}
+
+// vpnStatusLabel renders a VPN's connection state for display.
+//
+// An ambiguous entry is one where the daemon reports a tunnel up but the
+// responsible config entry cannot be identified — printing "disconnected"
+// there would contradict the daemon, so say what is actually known.
+func vpnStatusLabel(v types.VPNStatus) string {
+	switch {
+	case v.Connected:
+		return "connected"
+	case v.Ambiguous:
+		return "disconnected? (a " + v.Type + " tunnel is up; run as root to identify which profile)"
+	default:
+		return "disconnected"
+	}
 }
