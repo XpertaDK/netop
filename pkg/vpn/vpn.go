@@ -488,6 +488,20 @@ func (m *Manager) ListVPNs() ([]types.VPNStatus, error) {
 		runningNetBird = true
 	}
 
+	// Ask which profile the daemon has selected. This is what makes several
+	// NetBird configs distinguishable: without it, same-type configs are
+	// ambiguous and all report disconnected (see typeCount below). Best
+	// effort — an older CLI or a permission error leaves this empty and
+	// falls back to that conservative behavior.
+	activeNetBirdProfile := ""
+	if runningNetBird {
+		if out, err := m.executor.ExecuteWithTimeout(2*time.Second, "netbird", "profile", "list"); err == nil {
+			activeNetBirdProfile = netBirdActiveProfile(out)
+		} else {
+			m.logger.Debug("Failed to list NetBird profiles", "error", err)
+		}
+	}
+
 	// liveConnected reports whether a VPN of the given type is actually up
 	// right now, based on the probes above.
 	liveConnected := func(vpnType, iface string) bool {
@@ -544,6 +558,12 @@ func (m *Manager) ListVPNs() ([]types.VPNStatus, error) {
 			}
 			if activeVPN != "" {
 				status.Connected = name == activeVPN && liveConnected(vpnConfig.Type, iface)
+			} else if vpnConfig.Type == "netbird" && vpnConfig.Profile != "" && activeNetBirdProfile != "" {
+				// Profile-distinguished: the daemon names the selected
+				// profile, so several NetBird configs are unambiguous even
+				// with no state file. Still gated on the daemon being up,
+				// since a profile stays selected after "netbird down".
+				status.Connected = runningNetBird && vpnConfig.Profile == activeNetBirdProfile
 			} else if typeCount[vpnConfig.Type] > 1 {
 				// Ambiguous: multiple same-type daemon VPNs, none tracked.
 				// Report disconnected rather than falsely flag all as up.
@@ -648,6 +668,52 @@ func netBirdStatusConnected(output string) bool {
 		return strings.Contains(output, `"daemonStatus":"Connected"`)
 	}
 	return st.DaemonStatus == "Connected"
+}
+
+// netBirdActiveProfile returns the profile name marked ACTIVE in
+// "netbird profile list" output, or "" when none is marked or the output
+// cannot be parsed.
+//
+// The listing is a two-column table whose ACTIVE column holds a checkmark
+// for the selected profile:
+//
+//	NAME     ACTIVE
+//	wendy
+//	vesperx  ✓
+//
+// "Active" means selected, not connected — a profile stays marked after
+// "netbird down", so callers must pair this with a daemon status check.
+func netBirdActiveProfile(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		// Skip the header row.
+		if strings.EqualFold(fields[0], "NAME") {
+			continue
+		}
+		// Match the active marker itself rather than merely the presence of
+		// a second column: other columns (a STATUS field, say) would
+		// otherwise make the first listed profile look active.
+		for _, f := range fields[1:] {
+			if isNetBirdActiveMarker(f) {
+				return fields[0]
+			}
+		}
+	}
+	return ""
+}
+
+// isNetBirdActiveMarker reports whether a column value marks the active
+// profile. NetBird prints "✓"; accept the common ASCII variants too so a
+// non-UTF8 terminal or a future CLI tweak does not silently break detection.
+func isNetBirdActiveMarker(field string) bool {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "✓", "*", "yes", "true", "active", "(active)":
+		return true
+	}
+	return false
 }
 
 // waitForVPNStatus polls a VPN CLI's status command until connected(output)

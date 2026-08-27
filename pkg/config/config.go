@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/angelfreak/net/pkg/types"
@@ -257,6 +258,7 @@ func validateRawConfig(raw map[string]interface{}) ValidationErrors {
 						errors = append(errors, errs...)
 					}
 				}
+				errors = append(errors, validateDaemonVPNProfiles(vpnMap)...)
 			}
 		default:
 			// It's either a network config or an alias (string value)
@@ -269,6 +271,105 @@ func validateRawConfig(raw map[string]interface{}) ValidationErrors {
 	}
 
 	return errors
+}
+
+// daemonVPNTypes are VPN types backed by a single global daemon holding one
+// active account at a time. Several configs of the same type are only
+// distinguishable by which profile they select, unlike WireGuard, which is
+// keyed by a distinct interface.
+var daemonVPNTypes = map[string]bool{
+	"netbird":   true,
+	"tailscale": true,
+}
+
+// validateDaemonVPNProfiles rejects two or more configs of the same
+// daemon-backed VPN type that do not each name a profile.
+//
+// Without a profile, connectNetBird/connectTailscale skip the "profile
+// select" step entirely and issue an identical "up", so every such entry
+// connects whatever profile the daemon last used. The names suggest a
+// choice that the config cannot actually express, which silently connects
+// the wrong account. Requiring a profile once a second entry appears makes
+// that failure loud at load time instead.
+func validateDaemonVPNProfiles(vpnMap map[string]interface{}) []ValidationError {
+	byType := make(map[string][]string)
+	profiles := make(map[string]string)
+
+	for vpnName, vpnValue := range vpnMap {
+		vpnConfig, ok := vpnValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// Matched case-sensitively to mirror pkg/vpn, which switches on the
+		// raw type string: a differently-cased type never reaches a daemon
+		// code path at all, so flagging it here would describe a connection
+		// that cannot happen.
+		vpnType, _ := vpnConfig["type"].(string)
+		if !daemonVPNTypes[vpnType] {
+			continue
+		}
+		byType[vpnType] = append(byType[vpnType], vpnName)
+		if profile, ok := vpnConfig["profile"].(string); ok {
+			profiles[vpnName] = strings.TrimSpace(profile)
+		}
+	}
+
+	var errors []ValidationError
+	for vpnType, names := range byType {
+		if len(names) < 2 {
+			continue
+		}
+		sort.Strings(names)
+
+		var missing []string
+		for _, name := range names {
+			if profiles[name] == "" {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			errors = append(errors, ValidationError{
+				Section: "vpn",
+				Field:   "profile",
+				Message: fmt.Sprintf(
+					"%d %s VPNs are configured (%s) but %s no profile: — %s runs one daemon with one active profile, so these entries all connect the same account. Add a distinct profile: to each (see 'netbird profile list' / 'tailscale switch --list').",
+					len(names), vpnType, strings.Join(names, ", "),
+					missingClause(missing), vpnType),
+			})
+			continue
+		}
+
+		// Distinct names are required too: two entries selecting the same
+		// profile are the same connection under different labels.
+		seen := make(map[string]string, len(names))
+		for _, name := range names {
+			profile := profiles[name]
+			if prev, dup := seen[profile]; dup {
+				errors = append(errors, ValidationError{
+					Section: "vpn",
+					Field:   "profile",
+					Message: fmt.Sprintf(
+						"%s VPNs %q and %q both use profile %q — they are the same connection under two names. Give each a distinct profile.",
+						vpnType, prev, name, profile),
+				})
+				continue
+			}
+			seen[profile] = name
+		}
+	}
+	return errors
+}
+
+// missingClause renders the subject/verb for the entries lacking a profile.
+func missingClause(missing []string) string {
+	if len(missing) == 1 {
+		return fmt.Sprintf("%q has", missing[0])
+	}
+	quoted := make([]string, len(missing))
+	for i, name := range missing {
+		quoted[i] = fmt.Sprintf("%q", name)
+	}
+	return strings.Join(quoted, ", ") + " have"
 }
 
 // commonFirstNames is a list of common first names used for hostname generation
