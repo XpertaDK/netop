@@ -462,3 +462,92 @@ func TestNetBirdActiveProfile(t *testing.T) {
 		})
 	}
 }
+
+// Regression: "netbird status --json" reflects the SHARED daemon, but
+// "netbird profile list" is per-OS-user. Run unprivileged, the listing shows
+// only that user's profiles with none active, while the daemon is genuinely
+// connected under a profile from root's set. Reporting every entry
+// disconnected then contradicts the daemon.
+//
+// With exactly one config entry of the type there is nothing to disambiguate,
+// so daemon status alone is authoritative — same as before profiles existed.
+func TestListVPNs_SingleNetBirdTrustsDaemonWhenProfileUnknown(t *testing.T) {
+	tempDir := t.TempDir()
+	executor := &mockSystemExecutor{
+		commands: map[string]string{
+			"pgrep -f openvpn":        "",
+			"tailscale status --json": "",
+			"netbird status --json":   `{"daemonStatus":"Connected"}`,
+			// Unprivileged view: the connected profile is not even listed.
+			"netbird profile list": "NAME     ACTIVE\ndefault\n",
+		},
+		errors: map[string]error{
+			"pgrep -f openvpn":        fmt.Errorf("no match"),
+			"tailscale status --json": fmt.Errorf("not installed"),
+		},
+	}
+	logger := &mockLogger{}
+	configMgr := &mockConfigManager{
+		vpnConfigs: map[string]*types.VPNConfig{
+			"vesperx-net": {Type: "netbird", Profile: "vesperx"},
+		},
+	}
+	manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
+	manager.routeMgr = newFakeRoutes()
+	manager.addrMgr = newFakeAddrs()
+	manager.linkMgr = newFakeLinks()
+
+	vpns, err := manager.ListVPNs()
+	assert.NoError(t, err)
+	assert.Len(t, vpns, 1)
+	assert.True(t, vpns[0].Connected,
+		"a lone NetBird entry must follow daemon status when the profile list is unreadable")
+}
+
+// The real failure: TWO NetBird entries plus an unprivileged profile list.
+// The daemon is connected under "vesperx", but the per-user listing shows
+// only "default" with none active, so no entry matches and both report
+// disconnected — contradicting the daemon, which says a tunnel is up.
+//
+// Observed on a real host: "net status" showed vesperx-net disconnected
+// while "sudo netbird status" reported Management: Connected.
+func TestListVPNs_MultiNetBirdUnreadableProfileStillReportsDaemon(t *testing.T) {
+	tempDir := t.TempDir()
+	executor := &mockSystemExecutor{
+		commands: map[string]string{
+			"pgrep -f openvpn":        "",
+			"tailscale status --json": "",
+			"netbird status --json":   `{"daemonStatus":"Connected"}`,
+			"netbird profile list":    "NAME     ACTIVE\ndefault\n",
+		},
+		errors: map[string]error{
+			"pgrep -f openvpn":        fmt.Errorf("no match"),
+			"tailscale status --json": fmt.Errorf("not installed"),
+		},
+	}
+	logger := &mockLogger{}
+	configMgr := &mockConfigManager{
+		vpnConfigs: map[string]*types.VPNConfig{
+			"wendy-net":   {Type: "netbird", Profile: "wendy"},
+			"vesperx-net": {Type: "netbird", Profile: "vesperx"},
+		},
+	}
+	manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
+	manager.routeMgr = newFakeRoutes()
+	manager.addrMgr = newFakeAddrs()
+	manager.linkMgr = newFakeLinks()
+
+	vpns, err := manager.ListVPNs()
+	assert.NoError(t, err)
+	assert.Len(t, vpns, 2)
+
+	// We cannot tell WHICH profile is up, so we must not claim either is.
+	// But the caller must still learn a NetBird tunnel exists, rather than
+	// being told everything is down while the daemon says otherwise.
+	for _, v := range vpns {
+		assert.False(t, v.Connected,
+			"cannot attribute the session to %q without a readable profile list", v.Name)
+		assert.True(t, v.Ambiguous,
+			"%q must be flagged ambiguous so the caller can surface the live daemon", v.Name)
+	}
+}
