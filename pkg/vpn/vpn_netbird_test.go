@@ -447,6 +447,12 @@ func TestNetBirdActiveProfile(t *testing.T) {
 		{"extra status column", "NAME     ACTIVE   STATUS\nwendy             idle\nvesperx  \u2713        up\n", "vesperx"},
 		{"extra column none active", "NAME     ACTIVE   STATUS\nwendy             idle\nvesperx           up\n", ""},
 		{"asterisk marker", "NAME     ACTIVE\nwendy\nvesperx  *\n", "vesperx"},
+		// Shapes observed from netbird 0.76.0 on a real multi-profile host.
+		// Inactive rows carry a trailing-whitespace ACTIVE column, so they
+		// yield a single field and must not be mistaken for active.
+		{"real: single profile none active", "NAME     ACTIVE\ndefault  \n", ""},
+		{"real: middle profile active", "NAME     ACTIVE\ndefault  \nvesperx  \u2713\nwendy    \n", "vesperx"},
+		{"real: last profile active", "NAME     ACTIVE\ndefault  \nvesperx  \nwendy    \u2713\n", "wendy"},
 		{"empty", "", ""},
 		{"header only", "NAME     ACTIVE\n", ""},
 	}
