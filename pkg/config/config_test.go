@@ -1100,3 +1100,95 @@ func TestPortalConfigEmptyURLAllowed(t *testing.T) {
 		assert.NoError(t, err, "portal url form %s must be accepted", name)
 	}
 }
+
+// TestValidate_IndistinguishableDaemonVPNs covers the trap that two NetBird
+// configs differing only by map key are the same connection: connectNetBird
+// skips "profile select" when Profile is empty, so both entries run an
+// identical "up" and connect whatever profile the daemon last selected —
+// silently the wrong account.
+func TestValidate_IndistinguishableDaemonVPNs(t *testing.T) {
+	raw := map[string]interface{}{
+		"vpn": map[string]interface{}{
+			"wendy-net": map[string]interface{}{
+				"type":           "netbird",
+				"management_url": "https://api.netbird.io",
+			},
+			"vesperx-net": map[string]interface{}{
+				"type":           "netbird",
+				"management_url": "https://api.netbird.io",
+			},
+		},
+	}
+
+	errs := validateRawConfig(raw)
+
+	var found *ValidationError
+	for i := range errs {
+		if strings.Contains(errs[i].Message, "profile") {
+			found = &errs[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected a validation error naming 'profile', got %+v", errs)
+	}
+	assert.Contains(t, found.Message, "netbird")
+	assert.Contains(t, found.Message, "wendy-net")
+	assert.Contains(t, found.Message, "vesperx-net")
+}
+
+// A profile: on each entry makes them distinct — no error.
+func TestValidate_DaemonVPNsDistinguishedByProfile(t *testing.T) {
+	raw := map[string]interface{}{
+		"vpn": map[string]interface{}{
+			"wendy-net": map[string]interface{}{
+				"type":    "netbird",
+				"profile": "wendy",
+			},
+			"vesperx-net": map[string]interface{}{
+				"type":    "netbird",
+				"profile": "vesperx",
+			},
+		},
+	}
+
+	for _, e := range validateRawConfig(raw) {
+		assert.NotContains(t, e.Message, "profile", "distinct profiles must not error")
+	}
+}
+
+// A single daemon VPN with no profile is fine — nothing to confuse it with.
+func TestValidate_SingleDaemonVPNNeedsNoProfile(t *testing.T) {
+	raw := map[string]interface{}{
+		"vpn": map[string]interface{}{
+			"wendy-net": map[string]interface{}{
+				"type": "netbird",
+			},
+		},
+	}
+
+	for _, e := range validateRawConfig(raw) {
+		assert.NotContains(t, e.Message, "profile", "a lone daemon VPN needs no profile")
+	}
+}
+
+// WireGuard is keyed by a distinct interface, not a daemon profile, so
+// multiple entries without profile: are legitimate (see proton-se/proton-dk).
+func TestValidate_MultipleWireGuardVPNsAllowed(t *testing.T) {
+	raw := map[string]interface{}{
+		"vpn": map[string]interface{}{
+			"proton-se": map[string]interface{}{
+				"type":      "wireguard",
+				"interface": "wg0",
+			},
+			"proton-dk": map[string]interface{}{
+				"type":      "wireguard",
+				"interface": "wg0",
+			},
+		},
+	}
+
+	for _, e := range validateRawConfig(raw) {
+		assert.NotContains(t, e.Message, "profile", "wireguard must be exempt")
+	}
+}

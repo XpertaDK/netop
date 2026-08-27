@@ -315,3 +315,144 @@ func TestConnect_KeepsStateWhenExistingVPNTeardownFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot disconnect active VPN")
 	assert.Equal(t, "old-nb", manager.getActiveVPN(), "old VPN state must be retained")
 }
+
+// TestListVPNs_ProfileDisambiguatesNetBird covers the case the typeCount
+// guard is too blunt for: two NetBird configs that DO name distinct
+// profiles are not ambiguous, because the daemon reports which profile is
+// active. Only the entry whose profile is active may show connected.
+func TestListVPNs_ProfileDisambiguatesNetBird(t *testing.T) {
+	tempDir := t.TempDir()
+	executor := &mockSystemExecutor{
+		commands: map[string]string{
+			"pgrep -f openvpn":        "",
+			"tailscale status --json": "",
+			"netbird status --json":   `{"daemonStatus":"Connected"}`,
+			"netbird profile list": "NAME     ACTIVE\n" +
+				"wendy\n" +
+				"vesperx  ✓\n",
+		},
+		errors: map[string]error{
+			"pgrep -f openvpn":        fmt.Errorf("no match"),
+			"tailscale status --json": fmt.Errorf("not installed"),
+		},
+	}
+	logger := &mockLogger{}
+	configMgr := &mockConfigManager{
+		vpnConfigs: map[string]*types.VPNConfig{
+			"wendy-net":   {Type: "netbird", Profile: "wendy"},
+			"vesperx-net": {Type: "netbird", Profile: "vesperx"},
+		},
+	}
+	manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
+	manager.routeMgr = newFakeRoutes()
+	manager.addrMgr = newFakeAddrs()
+	manager.linkMgr = newFakeLinks()
+
+	vpns, err := manager.ListVPNs()
+	assert.NoError(t, err)
+	assert.Len(t, vpns, 2)
+
+	byName := map[string]bool{}
+	for _, v := range vpns {
+		byName[v.Name] = v.Connected
+	}
+	assert.True(t, byName["vesperx-net"], "the entry whose profile is ACTIVE must report connected")
+	assert.False(t, byName["wendy-net"], "an inactive profile must not report connected")
+}
+
+// When the daemon is down, no profile reports connected even though one is
+// still marked ACTIVE — ACTIVE means "selected", not "up".
+func TestListVPNs_ActiveProfileDownNotConnected(t *testing.T) {
+	tempDir := t.TempDir()
+	executor := &mockSystemExecutor{
+		commands: map[string]string{
+			"pgrep -f openvpn":        "",
+			"tailscale status --json": "",
+			"netbird status --json":   `{"daemonStatus":"Disconnected"}`,
+			"netbird profile list":    "NAME     ACTIVE\nwendy\nvesperx  ✓\n",
+		},
+		errors: map[string]error{
+			"pgrep -f openvpn":        fmt.Errorf("no match"),
+			"tailscale status --json": fmt.Errorf("not installed"),
+		},
+	}
+	logger := &mockLogger{}
+	configMgr := &mockConfigManager{
+		vpnConfigs: map[string]*types.VPNConfig{
+			"wendy-net":   {Type: "netbird", Profile: "wendy"},
+			"vesperx-net": {Type: "netbird", Profile: "vesperx"},
+		},
+	}
+	manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
+	manager.routeMgr = newFakeRoutes()
+	manager.addrMgr = newFakeAddrs()
+	manager.linkMgr = newFakeLinks()
+
+	vpns, err := manager.ListVPNs()
+	assert.NoError(t, err)
+	for _, v := range vpns {
+		assert.False(t, v.Connected, "daemon down: %q must not report connected", v.Name)
+	}
+}
+
+// Falling back to the old conservative behavior when "profile list" is
+// unavailable (older CLI, permission error) must not regress: neither
+// profile-less entry may be flagged connected.
+func TestListVPNs_ProfileListUnavailableStaysConservative(t *testing.T) {
+	tempDir := t.TempDir()
+	executor := &mockSystemExecutor{
+		commands: map[string]string{
+			"pgrep -f openvpn":        "",
+			"tailscale status --json": "",
+			"netbird status --json":   `{"daemonStatus":"Connected"}`,
+		},
+		errors: map[string]error{
+			"pgrep -f openvpn":        fmt.Errorf("no match"),
+			"tailscale status --json": fmt.Errorf("not installed"),
+			"netbird profile list":    fmt.Errorf("unknown command"),
+		},
+	}
+	logger := &mockLogger{}
+	configMgr := &mockConfigManager{
+		vpnConfigs: map[string]*types.VPNConfig{
+			"wendy-net":   {Type: "netbird", Profile: "wendy"},
+			"vesperx-net": {Type: "netbird", Profile: "vesperx"},
+		},
+	}
+	manager := NewManagerWithDir(executor, logger, configMgr, tempDir)
+	manager.routeMgr = newFakeRoutes()
+	manager.addrMgr = newFakeAddrs()
+	manager.linkMgr = newFakeLinks()
+
+	vpns, err := manager.ListVPNs()
+	assert.NoError(t, err)
+	for _, v := range vpns {
+		assert.False(t, v.Connected, "no profile info: %q must not be flagged connected", v.Name)
+	}
+}
+
+func TestNetBirdActiveProfile(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{"checkmark", "NAME     ACTIVE\nwendy\nvesperx  ✓\n", "vesperx"},
+		{"first is active", "NAME     ACTIVE\nwendy    ✓\nvesperx\n", "wendy"},
+		{"single default", "NAME     ACTIVE\ndefault  ✓\n", "default"},
+		{"none active", "NAME     ACTIVE\nwendy\nvesperx\n", ""},
+		// Regression: a row having a second column is not proof of being
+		// active. With an extra STATUS column, matching on column presence
+		// alone returned the first profile listed.
+		{"extra status column", "NAME     ACTIVE   STATUS\nwendy             idle\nvesperx  \u2713        up\n", "vesperx"},
+		{"extra column none active", "NAME     ACTIVE   STATUS\nwendy             idle\nvesperx           up\n", ""},
+		{"asterisk marker", "NAME     ACTIVE\nwendy\nvesperx  *\n", "vesperx"},
+		{"empty", "", ""},
+		{"header only", "NAME     ACTIVE\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, netBirdActiveProfile(tt.output))
+		})
+	}
+}
