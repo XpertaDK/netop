@@ -1192,3 +1192,57 @@ func TestValidate_MultipleWireGuardVPNsAllowed(t *testing.T) {
 		assert.NotContains(t, e.Message, "profile", "wireguard must be exempt")
 	}
 }
+
+// pkg/vpn switches on the raw type string, so a differently-cased type never
+// reaches a daemon code path. Validation must match that exactly rather than
+// warn about a connection that cannot happen.
+func TestValidate_DaemonVPNTypeMatchingIsCaseSensitive(t *testing.T) {
+	raw := map[string]interface{}{
+		"vpn": map[string]interface{}{
+			"a": map[string]interface{}{"type": "NetBird"},
+			"b": map[string]interface{}{"type": "NetBird"},
+		},
+	}
+
+	for _, e := range validateRawConfig(raw) {
+		assert.NotContains(t, e.Message, "profile",
+			"non-canonical type is not a daemon path; no profile error")
+	}
+}
+
+// Two entries naming the same profile are one connection under two labels.
+func TestValidate_DuplicateProfileRejected(t *testing.T) {
+	raw := map[string]interface{}{
+		"vpn": map[string]interface{}{
+			"a": map[string]interface{}{"type": "netbird", "profile": "shared"},
+			"b": map[string]interface{}{"type": "netbird", "profile": "shared"},
+		},
+	}
+
+	var found bool
+	for _, e := range validateRawConfig(raw) {
+		if strings.Contains(e.Message, "same connection under two names") {
+			found = true
+			assert.Contains(t, e.Message, "shared")
+		}
+	}
+	assert.True(t, found, "duplicate profiles must be rejected")
+}
+
+// Whitespace-only profile is not a real distinction.
+func TestValidate_BlankProfileTreatedAsMissing(t *testing.T) {
+	raw := map[string]interface{}{
+		"vpn": map[string]interface{}{
+			"a": map[string]interface{}{"type": "netbird", "profile": "   "},
+			"b": map[string]interface{}{"type": "netbird", "profile": "real"},
+		},
+	}
+
+	var found bool
+	for _, e := range validateRawConfig(raw) {
+		if strings.Contains(e.Message, "no profile") {
+			found = true
+		}
+	}
+	assert.True(t, found, "blank profile must count as missing")
+}

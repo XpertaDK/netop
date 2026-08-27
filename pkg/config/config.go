@@ -300,8 +300,11 @@ func validateDaemonVPNProfiles(vpnMap map[string]interface{}) []ValidationError 
 		if !ok {
 			continue
 		}
+		// Matched case-sensitively to mirror pkg/vpn, which switches on the
+		// raw type string: a differently-cased type never reaches a daemon
+		// code path at all, so flagging it here would describe a connection
+		// that cannot happen.
 		vpnType, _ := vpnConfig["type"].(string)
-		vpnType = strings.ToLower(strings.TrimSpace(vpnType))
 		if !daemonVPNTypes[vpnType] {
 			continue
 		}
